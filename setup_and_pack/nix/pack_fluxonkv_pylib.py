@@ -843,12 +843,15 @@ def _ensure_bridge_prebuilt_writable_native_authority(
     build_root_path = spec.profile_source.build_root_path
     if build_root_path is None:
         raise RuntimeError("bridge_prebuilt profile.build_root_path is required for writable native authority")
-    native_runtime_store_path = Path(build_root_path).resolve() / "fluxon_rs" / "target"
-    if not native_runtime_store_path.is_dir():
+    fluxon_rs_root = Path(build_root_path).resolve() / "fluxon_rs"
+    if not fluxon_rs_root.is_dir():
         raise RuntimeError(
-            "bridge_prebuilt profile.build_root_path must contain fluxon_rs/target for writable native authority: "
-            f"{native_runtime_store_path}"
+            "bridge_prebuilt profile.build_root_path must contain fluxon_rs for writable native authority: "
+            f"{fluxon_rs_root}"
         )
+    # target/ is a writable build output root and may be absent in a clean checkout.
+    native_runtime_store_path = fluxon_rs_root / "target"
+    native_runtime_store_path.mkdir(parents=True, exist_ok=True)
     _initialize_writable_native_runtime_dir(
         staged_dir=native_runtime_store_path / writable_native_dir_name,
         dir_name=writable_native_dir_name,

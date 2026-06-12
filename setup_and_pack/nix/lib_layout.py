@@ -560,12 +560,15 @@ def _resolve_profile_source(*, spec: ExperimentSpec, layout: LayoutPaths) -> Res
                 "profile.profile_path must be omitted when profile.source_kind=bridge_prebuilt"
             )
         build_root_path = resolve_bridge_prebuilt_build_root(spec=spec)
-        native_runtime_store_path = build_root_path / "fluxon_rs" / "target"
-        if not native_runtime_store_path.is_dir():
+        fluxon_rs_root = build_root_path / "fluxon_rs"
+        if not fluxon_rs_root.is_dir():
             raise RuntimeError(
-                "bridge_prebuilt build root must contain fluxon_rs/target: "
-                f"{native_runtime_store_path}"
+                "bridge_prebuilt build root must contain fluxon_rs: "
+                f"{fluxon_rs_root}"
             )
+        # target/ is a writable build output root and may be absent in a clean checkout.
+        native_runtime_store_path = fluxon_rs_root / "target"
+        native_runtime_store_path.mkdir(parents=True, exist_ok=True)
         native_store_root = native_runtime_store_path
         target_support_store_root = native_runtime_store_path
         profile_native_dir = native_runtime_store_path / "native"
