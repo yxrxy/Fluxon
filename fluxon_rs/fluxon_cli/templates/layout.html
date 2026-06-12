@@ -1,0 +1,625 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Fluxon{% endblock %}</title>
+	<style>
+	    body { font-family: ui-sans-serif, system-ui, Segoe UI, Roboto, Helvetica, Arial; max-width: 1400px; margin: 24px auto; padding: 0 16px; }
+    a { color: #2563eb; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    .muted { color: #6b7280; }
+    .bad { color: #b91c1c; }
+    .card { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px 14px; background: #fff; }
+    .row { margin: 8px 0; }
+    .top { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; margin-bottom: 16px; }
+    .formrow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    input, select, button { font: inherit; padding: 6px 8px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; }
+    button { cursor: pointer; background: #111827; color: #fff; border-color: #111827; }
+    .warn { border: 1px solid #f59e0b; background: #fffbeb; border-radius: 10px; padding: 10px 12px; margin: 10px 0; }
+    .tablewrap { overflow: auto; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border: 1px solid #e5e7eb; padding: 6px 8px; text-align: left; font-size: 12px; }
+    th { background: #f8fafc; position: sticky; top: 0; z-index: 2; }
+    .cell { display: flex; flex-direction: column; gap: 2px; }
+    .tiny { font-size: 11px; }
+    .pill { display: inline-flex; align-items: center; border: 1px solid #e5e7eb; background: #f8fafc; border-radius: 999px; padding: 4px 8px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; color: #111827; }
+    .pill_na { background: #f3f4f6; color: #6b7280; }
+    .pill_warn { background: #fffbeb; border-color: #f59e0b; color: #92400e; }
+
+	    /* Transfer link matrix */
+	    .mxwrap { overflow: auto; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; }
+	    :root { --mx-cell: 24px; }
+
+	    table.mx { border-collapse: collapse; width: max-content; table-layout: fixed; }
+	    table.mx th, table.mx td { border: 1px solid #e5e7eb; padding: 0; box-sizing: border-box; }
+	    table.mx td { width: var(--mx-cell); height: var(--mx-cell); }
+
+	    /* Sticky first column and header row. */
+	    table.mx th.corner { position: sticky; left: 0; top: 0; z-index: 5; background: #f8fafc; width: 80px; min-width: 80px; }
+	    table.mx th.rowhdr { position: sticky; left: 0; z-index: 3; background: #f8fafc; padding: 0 8px; text-align: right; white-space: nowrap; width: 80px; }
+
+	    /* Column headers: adaptive height + bottom alignment. */
+	    table.mx th.colhdr { position: sticky; top: 0; z-index: 4; background: #f8fafc; vertical-align: bottom; padding-bottom: 8px; height: auto; width: var(--mx-cell); min-width: var(--mx-cell); }
+	    table.mx th.colhdr .rot { writing-mode: vertical-rl; transform: rotate(180deg); text-align: left; white-space: nowrap; display: inline-block; width: var(--mx-cell); line-height: var(--mx-cell); }
+
+	    /* 1) Make diagonal more recognizable. */
+	    .mxdia { background-color: #f1f5f9 !important; position: relative; }
+	    .mxdia::after { content: ""; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(45deg, transparent 45%, #e2e8f0 45%, #e2e8f0 55%, transparent 55%); background-size: 5px 5px; pointer-events: none; z-index: 0; }
+	    .mxdia .mxcell { position: relative; z-index: 1; }
+
+	    /* 4) Cell pixels. */
+	    .mxcell { display: flex; gap: 2px; justify-content: center; align-items: center; height: var(--mx-cell); }
+	    .mxpx { display: inline-block; width: 6px; height: 12px; background: #e5e7eb; border-radius: 1px; transition: transform 0.1s; }
+
+	    /* Hover helps tracking row/col. */
+	    table.mx tr:hover td { background-color: #f8fafc; }
+	    .mxcell:hover .mxpx { transform: scale(1.2); }
+
+    .mxp2p_ice { background: #1d4ed8; }
+    .mxp2p_tcp { background: #b91c1c; }
+    .mxp2p_websocket { background: #7c3aed; }
+    .mxp2p_quic { background: #0891b2; }
+    .mxp2p_tquic { background: #65a30d; }
+    .mxp2p_unknown { background: #374151; }
+    .mxte { background: #059669; }
+    .mxtequic { background: #0891b2; }
+    .mxalt { background: #f59e0b; }
+
+    .mxlegend { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 8px 0; }
+    .mxlegenditem { display: inline-flex; gap: 6px; align-items: center; }
+    .mxlegendcell { display: inline-flex; gap: 2px; }
+
+    .nmaster { color: #b91c1c; font-weight: 600; }
+    .nowner { color: #065f46; font-weight: 600; }
+    .nrelay { color: #7c3aed; font-weight: 600; }
+  </style>
+  {% block head_extra %}{% endblock %}
+  <script>
+  // English note: Interactive table controller v1.
+  //
+  // Causal chain:
+  // - fluxon_cli uses SSR + auto-refresh that replaces `#app` innerHTML.
+  // - Any DOM listeners must be re-wired after each replace.
+  // - We keep the interactive-table logic in `layout.html` so it survives `#app` replacement
+  //   and can be reused by multiple pages (KV monitor table, MQ monitor tables, ...).
+  (() => {
+    if (window.fluxonCliInteractiveTableV1 && window.fluxonCliInteractiveTableV1._v === 1) return;
+
+    function isFn(v) {
+      return typeof v === 'function';
+    }
+
+    function getText(v) {
+      return (v || '').toString().trim().toLowerCase();
+    }
+
+    function parseI64WithErr(s) {
+      const t = (s || '').toString().trim();
+      if (t === '') return { n: null, err: '' };
+      const n = Number(t);
+      if (!Number.isFinite(n)) return { n: null, err: 'invalid integer: ' + t };
+      return { n: Math.trunc(n), err: '' };
+    }
+
+    function compareValues(avRaw, bvRaw) {
+      const av = avRaw ?? '';
+      const bv = bvRaw ?? '';
+      const an = (av === '') ? Number.NaN : Number(av);
+      const bn = (bv === '') ? Number.NaN : Number(bv);
+      if (!Number.isNaN(an) && !Number.isNaN(bn)) {
+        return an === bn ? 0 : (an < bn ? -1 : 1);
+      }
+      return String(av).localeCompare(String(bv));
+    }
+
+    function compareBySortLevels(a, b, levels) {
+      for (const lv of levels) {
+        const keyAttr = 'data-sort-' + lv.key.replaceAll('_', '-');
+        const av = a.getAttribute(keyAttr);
+        const bv = b.getAttribute(keyAttr);
+        const cmp = compareValues(av, bv);
+        if (cmp !== 0) {
+          return lv.dir === 'desc' ? -cmp : cmp;
+        }
+      }
+      return 0;
+    }
+
+    function getSelectedValues(selectEl) {
+      if (!selectEl) return [];
+      const out = [];
+      for (const opt of Array.from(selectEl.options)) {
+        if (opt.selected) out.push(opt.value);
+      }
+      return out;
+    }
+
+    function setSelectedValues(selectEl, values) {
+      if (!selectEl) return;
+      const s = new Set(values || []);
+      for (const opt of Array.from(selectEl.options)) {
+        opt.selected = s.has(opt.value);
+      }
+    }
+
+    function create(cfg) {
+      if (!cfg || typeof cfg !== 'object') throw new Error('fluxonCliInteractiveTableV1.create: cfg must be an object');
+      if (!cfg.rootId) throw new Error('fluxonCliInteractiveTableV1.create: missing cfg.rootId');
+      if (!cfg.storageKey) throw new Error('fluxonCliInteractiveTableV1.create: missing cfg.storageKey');
+      if (!cfg.tbodyId) throw new Error('fluxonCliInteractiveTableV1.create: missing cfg.tbodyId');
+      if (!cfg.clearBtnId) throw new Error('fluxonCliInteractiveTableV1.create: missing cfg.clearBtnId');
+      if (!cfg.colToggleSelector) throw new Error('fluxonCliInteractiveTableV1.create: missing cfg.colToggleSelector');
+      if (!Array.isArray(cfg.sortLevels)) throw new Error('fluxonCliInteractiveTableV1.create: cfg.sortLevels must be an array');
+      if (!Array.isArray(cfg.filters)) throw new Error('fluxonCliInteractiveTableV1.create: cfg.filters must be an array');
+
+      const rootId = String(cfg.rootId);
+      const storageKey = String(cfg.storageKey);
+
+      function rootEl() {
+        const el = document.getElementById(rootId);
+        if (!el) console.warn('interactive_table: missing root', rootId);
+        return el;
+      }
+
+      function queryInRoot(selector) {
+        const r = rootEl();
+        if (!r) return null;
+        return r.querySelector(selector);
+      }
+
+      function queryAllInRoot(selector) {
+        const r = rootEl();
+        if (!r) return [];
+        return Array.from(r.querySelectorAll(selector));
+      }
+
+      function requireInRootById(id) {
+        const el = queryInRoot('#' + id);
+        if (!el) console.warn('interactive_table: missing element', id);
+        return el;
+      }
+
+      function captureFilters() {
+        const out = {};
+        for (const f of cfg.filters) {
+          if (!f || typeof f !== 'object') continue;
+          const kind = String(f.kind || '');
+          if (kind === 'substr') {
+            const key = String(f.key || '');
+            const inputId = String(f.inputId || '');
+            if (!key || !inputId) continue;
+            out[key] = requireInRootById(inputId)?.value || '';
+          } else if (kind === 'set') {
+            const key = String(f.key || '');
+            const selectId = String(f.selectId || '');
+            if (!key || !selectId) continue;
+            out[key] = getSelectedValues(requireInRootById(selectId));
+          } else if (kind === 'i64_range') {
+            const keyMin = String(f.keyMin || '');
+            const keyMax = String(f.keyMax || '');
+            const minId = String(f.minId || '');
+            const maxId = String(f.maxId || '');
+            if (!keyMin || !keyMax || !minId || !maxId) continue;
+            out[keyMin] = requireInRootById(minId)?.value || '';
+            out[keyMax] = requireInRootById(maxId)?.value || '';
+          } else {
+            console.warn('interactive_table: unknown filter kind', kind);
+          }
+        }
+        return out;
+      }
+
+      function captureSortLevels() {
+        const out = [];
+        for (const lv of cfg.sortLevels) {
+          const keyId = String(lv.keyId || '');
+          const dirId = String(lv.dirId || '');
+          const key = keyId ? (requireInRootById(keyId)?.value || 'none') : 'none';
+          const dir = dirId ? (requireInRootById(dirId)?.value || 'asc') : 'asc';
+          out.push({ key, dir });
+        }
+        return out;
+      }
+
+      function captureVisibleCols() {
+        const out = [];
+        for (const el of queryAllInRoot(cfg.colToggleSelector)) {
+          if (el instanceof HTMLInputElement && el.checked) out.push(el.value);
+        }
+        return out;
+      }
+
+      function captureTableState() {
+        return {
+          filters: captureFilters(),
+          sort: captureSortLevels(),
+          visible_cols: captureVisibleCols(),
+        };
+      }
+
+      function restoreFilters(spec) {
+        if (!spec || typeof spec !== 'object') return;
+        for (const f of cfg.filters) {
+          if (!f || typeof f !== 'object') continue;
+          const kind = String(f.kind || '');
+          if (kind === 'substr') {
+            const key = String(f.key || '');
+            const inputId = String(f.inputId || '');
+            if (!key || !inputId) continue;
+            const el = requireInRootById(inputId);
+            if (el) el.value = spec[key] || '';
+          } else if (kind === 'set') {
+            const key = String(f.key || '');
+            const selectId = String(f.selectId || '');
+            if (!key || !selectId) continue;
+            setSelectedValues(requireInRootById(selectId), spec[key] || []);
+          } else if (kind === 'i64_range') {
+            const keyMin = String(f.keyMin || '');
+            const keyMax = String(f.keyMax || '');
+            const minId = String(f.minId || '');
+            const maxId = String(f.maxId || '');
+            if (!keyMin || !keyMax || !minId || !maxId) continue;
+            const minEl = requireInRootById(minId);
+            const maxEl = requireInRootById(maxId);
+            if (minEl) minEl.value = spec[keyMin] || '';
+            if (maxEl) maxEl.value = spec[keyMax] || '';
+          }
+        }
+      }
+
+      function restoreSortLevels(levels) {
+        if (!Array.isArray(levels)) return;
+        for (let i = 0; i < cfg.sortLevels.length; i += 1) {
+          const v = levels[i];
+          if (!v) continue;
+          const lv = cfg.sortLevels[i];
+          if (!lv) continue;
+          const keyId = String(lv.keyId || '');
+          const dirId = String(lv.dirId || '');
+          if (keyId) {
+            const el = requireInRootById(keyId);
+            if (el) el.value = v.key || 'none';
+          }
+          if (dirId) {
+            const el = requireInRootById(dirId);
+            if (el) el.value = v.dir || 'asc';
+          }
+        }
+      }
+
+      function restoreVisibleCols(cols) {
+        if (!Array.isArray(cols)) return;
+        const s = new Set(cols);
+        for (const el of queryAllInRoot(cfg.colToggleSelector)) {
+          if (!(el instanceof HTMLInputElement)) continue;
+          el.checked = s.has(el.value);
+        }
+      }
+
+      function restoreTableState(state) {
+        if (!state || typeof state !== 'object') return;
+        restoreFilters(state.filters);
+        restoreSortLevels(state.sort);
+        restoreVisibleCols(state.visible_cols);
+      }
+
+      function saveTableStateToLocalStorage() {
+        try {
+          const spec = captureTableState();
+          localStorage.setItem(storageKey, JSON.stringify(spec));
+        } catch (e) {
+          console.warn('interactive_table: localStorage save failed', e);
+        }
+      }
+
+      function loadTableStateFromLocalStorage() {
+        try {
+          const raw = localStorage.getItem(storageKey);
+          if (!raw) return null;
+          return JSON.parse(raw);
+        } catch (e) {
+          console.warn('interactive_table: localStorage load failed', e);
+          return null;
+        }
+      }
+
+      function applyVisibleCols(cols) {
+        const set = new Set(cols || []);
+        for (const el of queryAllInRoot('[data-col]')) {
+          const col = el.getAttribute('data-col');
+          if (!col) continue;
+          el.style.display = set.has(col) ? '' : 'none';
+        }
+      }
+
+      function updateSortRowsVisibility() {
+        // English note: If an upper sort level is disabled, lower levels are meaningless.
+        // Clear them to avoid hidden state.
+        for (let i = 0; i < cfg.sortLevels.length; i += 1) {
+          const lv = cfg.sortLevels[i];
+          if (!lv) continue;
+          const keyId = String(lv.keyId || '');
+          const rowId = String(lv.rowId || '');
+          if (!keyId || !rowId) continue;
+
+          const prevKeyId = (i === 0) ? '' : String(cfg.sortLevels[i - 1]?.keyId || '');
+          const prevKey = prevKeyId ? (requireInRootById(prevKeyId)?.value || 'none') : 'none';
+          const curKey = requireInRootById(keyId)?.value || 'none';
+          const show = (i === 0) ? true : (prevKey !== 'none');
+
+          const rowEl = requireInRootById(rowId);
+          if (rowEl) rowEl.style.display = show ? '' : 'none';
+
+          if (!show) {
+            const keyEl = requireInRootById(keyId);
+            const dirId = String(lv.dirId || '');
+            const dirEl = dirId ? requireInRootById(dirId) : null;
+            if (keyEl) keyEl.value = 'none';
+            if (dirEl) dirEl.value = 'asc';
+          } else if (curKey === 'none') {
+            // If current level is none, downstream levels will be hidden+cleared by the loop.
+          }
+        }
+      }
+
+      function applyFilter() {
+        const body = requireInRootById(String(cfg.tbodyId));
+        if (!body) return;
+
+        const tableState = captureTableState();
+        const spec = tableState.filters || {};
+        applyVisibleCols(tableState.visible_cols);
+
+        const sortLevels = (tableState.sort || []).filter((v) => v && v.key && v.key !== 'none');
+
+        // Range errors (optional)
+        let errMsgs = [];
+        for (const f of cfg.filters) {
+          if (!f || typeof f !== 'object') continue;
+          const kind = String(f.kind || '');
+          if (kind !== 'i64_range') continue;
+          const keyMin = String(f.keyMin || '');
+          const keyMax = String(f.keyMax || '');
+          const minParsed = parseI64WithErr(spec[keyMin]);
+          const maxParsed = parseI64WithErr(spec[keyMax]);
+          if (minParsed.err) errMsgs.push(keyMin + ': ' + minParsed.err);
+          if (maxParsed.err) errMsgs.push(keyMax + ': ' + maxParsed.err);
+          if (!minParsed.err && !maxParsed.err && minParsed.n !== null && maxParsed.n !== null && minParsed.n > maxParsed.n) {
+            errMsgs.push('range: ' + keyMin + ' > ' + keyMax);
+          }
+        }
+        if (cfg.filterErrId) {
+          const errEl = requireInRootById(String(cfg.filterErrId));
+          if (errEl) {
+            errEl.textContent = errMsgs.join(' | ');
+            errEl.className = errMsgs.length > 0 ? 'bad tiny' : 'muted tiny';
+          }
+        }
+
+        const rows = Array.from(body.querySelectorAll('tr'));
+        for (const r of rows) {
+          let ok = true;
+          for (const f of cfg.filters) {
+            if (!f || typeof f !== 'object') continue;
+            const kind = String(f.kind || '');
+            if (kind === 'substr') {
+              const key = String(f.key || '');
+              const rowAttr = String(f.rowAttr || '');
+              const want = getText(spec[key]);
+              if (want === '') continue;
+              const got = getText(r.getAttribute(rowAttr));
+              if (!got.includes(want)) {
+                ok = false;
+                break;
+              }
+            } else if (kind === 'set') {
+              const key = String(f.key || '');
+              const rowAttr = String(f.rowAttr || '');
+              const set = new Set(spec[key] || []);
+              if (set.size === 0) continue;
+              const got = (r.getAttribute(rowAttr) || '').toString();
+              if (!set.has(got)) {
+                ok = false;
+                break;
+              }
+            } else if (kind === 'i64_range') {
+              const keyMin = String(f.keyMin || '');
+              const keyMax = String(f.keyMax || '');
+              const rowAttr = String(f.rowAttr || '');
+              const minParsed = parseI64WithErr(spec[keyMin]);
+              const maxParsed = parseI64WithErr(spec[keyMax]);
+              if (minParsed.err || maxParsed.err) continue;
+              const startMin = minParsed.n;
+              const startMax = maxParsed.n;
+              if (startMin === null && startMax === null) continue;
+              const raw = r.getAttribute(rowAttr);
+              const n = raw === null ? Number.NaN : Number(raw);
+              if (!Number.isFinite(n)) continue;
+              const v = Math.trunc(n);
+              if (startMin !== null && v < startMin) {
+                ok = false;
+                break;
+              }
+              if (startMax !== null && v > startMax) {
+                ok = false;
+                break;
+              }
+            }
+          }
+          r.style.display = ok ? '' : 'none';
+        }
+
+        saveTableStateToLocalStorage();
+        if (sortLevels.length === 0) return;
+
+        const visibleRows = rows.filter((r) => r.style.display !== 'none');
+        visibleRows.sort((a, b) => compareBySortLevels(a, b, sortLevels));
+        for (const r of visibleRows) body.appendChild(r);
+      }
+
+      function clearFilter() {
+        for (const f of cfg.filters) {
+          if (!f || typeof f !== 'object') continue;
+          const kind = String(f.kind || '');
+          if (kind === 'substr') {
+            const inputId = String(f.inputId || '');
+            const el = inputId ? requireInRootById(inputId) : null;
+            if (el) el.value = '';
+          } else if (kind === 'set') {
+            const selectId = String(f.selectId || '');
+            setSelectedValues(selectId ? requireInRootById(selectId) : null, []);
+          } else if (kind === 'i64_range') {
+            const minId = String(f.minId || '');
+            const maxId = String(f.maxId || '');
+            const minEl = minId ? requireInRootById(minId) : null;
+            const maxEl = maxId ? requireInRootById(maxId) : null;
+            if (minEl) minEl.value = '';
+            if (maxEl) maxEl.value = '';
+          }
+        }
+        for (const lv of cfg.sortLevels) {
+          const keyId = String(lv.keyId || '');
+          const dirId = String(lv.dirId || '');
+          if (keyId) {
+            const el = requireInRootById(keyId);
+            if (el) el.value = 'none';
+          }
+          if (dirId) {
+            const el = requireInRootById(dirId);
+            if (el) el.value = 'asc';
+          }
+        }
+        for (const el of queryAllInRoot(cfg.colToggleSelector)) {
+          if (!(el instanceof HTMLInputElement)) continue;
+          el.checked = true;
+        }
+        updateSortRowsVisibility();
+        applyFilter();
+      }
+
+      function wireUiHandlers() {
+        // Note: root (usually inside `#app`) is replaced by auto-refresh.
+        // Listeners must be re-wired after each refresh.
+        const clearBtn = requireInRootById(String(cfg.clearBtnId));
+        if (clearBtn) clearBtn.addEventListener('click', clearFilter);
+
+        for (const f of cfg.filters) {
+          if (!f || typeof f !== 'object') continue;
+          const kind = String(f.kind || '');
+          if (kind === 'substr') {
+            const el = requireInRootById(String(f.inputId || ''));
+            if (el) el.addEventListener('input', applyFilter);
+          } else if (kind === 'set') {
+            const el = requireInRootById(String(f.selectId || ''));
+            if (el) el.addEventListener('change', applyFilter);
+          } else if (kind === 'i64_range') {
+            const minEl = requireInRootById(String(f.minId || ''));
+            const maxEl = requireInRootById(String(f.maxId || ''));
+            if (minEl) minEl.addEventListener('input', applyFilter);
+            if (maxEl) maxEl.addEventListener('input', applyFilter);
+          }
+        }
+
+        for (const el of queryAllInRoot(cfg.colToggleSelector)) {
+          if (!(el instanceof HTMLInputElement)) continue;
+          el.addEventListener('change', applyFilter);
+        }
+
+        for (const lv of cfg.sortLevels) {
+          const keyId = String(lv.keyId || '');
+          const dirId = String(lv.dirId || '');
+          const keyEl = keyId ? requireInRootById(keyId) : null;
+          const dirEl = dirId ? requireInRootById(dirId) : null;
+          if (keyEl) {
+            keyEl.addEventListener('change', () => {
+              updateSortRowsVisibility();
+              applyFilter();
+            });
+          }
+          if (dirEl) dirEl.addEventListener('change', applyFilter);
+        }
+      }
+
+      function captureDetailsOpenState() {
+        const m = {};
+        const r0 = rootEl();
+        if (r0 && r0 instanceof HTMLDetailsElement) {
+          const k0 = r0.getAttribute('data-state-key');
+          if (k0) m[k0] = !!r0.open;
+        }
+        for (const d of queryAllInRoot('details[data-state-key]')) {
+          const k = d.getAttribute('data-state-key');
+          if (!k) continue;
+          m[k] = !!d.open;
+        }
+        return m;
+      }
+
+      function restoreDetailsOpenState(details) {
+        if (!details || typeof details !== 'object') return;
+        const r0 = rootEl();
+        if (r0 && r0 instanceof HTMLDetailsElement) {
+          const k0 = r0.getAttribute('data-state-key');
+          if (k0 && Object.prototype.hasOwnProperty.call(details, k0)) {
+            r0.open = !!details[k0];
+          }
+        }
+        for (const d of queryAllInRoot('details[data-state-key]')) {
+          const k = d.getAttribute('data-state-key');
+          if (!k) continue;
+          if (Object.prototype.hasOwnProperty.call(details, k)) {
+            d.open = !!details[k];
+          }
+        }
+      }
+
+      function captureState() {
+        return {
+          table: captureTableState(),
+          details: captureDetailsOpenState(),
+        };
+      }
+
+      function restoreState(state) {
+        if (!state) return;
+        restoreTableState(state.table);
+        restoreDetailsOpenState(state.details);
+        updateSortRowsVisibility();
+      }
+
+      function init() {
+        const saved = loadTableStateFromLocalStorage();
+        if (saved) restoreTableState(saved);
+        updateSortRowsVisibility();
+        wireUiHandlers();
+        applyFilter();
+      }
+
+      function afterReplace() {
+        wireUiHandlers();
+        applyFilter();
+      }
+
+      return {
+        init,
+        afterReplace,
+        captureState,
+        restoreState,
+        applyFilter,
+      };
+    }
+
+    window.fluxonCliInteractiveTableV1 = {
+      _v: 1,
+      create,
+      _internals: { isFn },
+    };
+  })();
+  </script>
+</head>
+<body>
+  {% block body %}{% endblock %}
+</body>
+</html>

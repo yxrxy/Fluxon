@@ -1,0 +1,736 @@
+namespace: fluxon_testbed
+
+name_prefix: fluxon-self-host2
+image: fluxon_quick_start:0.2.1
+
+# English note:
+# - fluxon-deployer reads manifests from hostworkdir (outside this repo).
+# - Mirroring generated DaemonSet YAMLs prevents "repo output updated but deployer still applies stale YAMLs".
+gen_k8s_daemonset_mirror_outdir: /mnt/nvme0/store_team_dev/fluxon_deploy/gen_k8s_daemonset
+
+cluster_nodes:
+  - hostname: example-node-a
+    ip: 192.0.2.10
+    hostworkdir: /opt/example/fluxon_deploy
+    ssh_user: example_user
+    ssh_port: 22
+    ssh_password: example_password
+  - hostname: example-node-b
+    ip: 192.0.2.11
+    # Keep the same absolute hostworkdir across nodes so the generated DaemonSet scripts
+    # can start services from a stable ${HOSTWORKDIR} layout when scheduled to example-node-b.
+    hostworkdir: /opt/example/fluxon_deploy
+    ssh_user: example_user
+    ssh_port: 22
+    ssh_password: example_password
+
+# Atomic service groups (self-host)
+#
+# Why:
+# - owner/external enforces protocol_version match, so upgrading master/owner/ops_controller/
+#   ops_agent in a single atomic action is more reliable than trying to keep the protocol/control
+#   plane alive while versions mismatch.
+# - Self-rolling upgrade means the managed set includes the control plane plus the deployer
+#   carrier itself. If we deploy them as separate workloads, an upgrade creates unavoidable
+#   partial-version windows that can break the cluster and prevent further reconcile.
+# - fluxon_fs_master / fluxon_fs_agent stay as plain services. They depend on the core protocol
+#   domain, but they are not themselves part of the protocol-version atomic boundary.
+# - fluxon-deployer only understands a strict K8s YAML subset. The generators compile a group
+#   into a single DaemonSet YAML (one action per node) instead of exposing "group" to deployer.
+atomic_groups:
+  fluxon_core_controller:
+    phase: 1
+    nodes: ["example-node-a", "example-node-b"]
+    services: ["master", "owner", "ops_controller", "ops_agent"]
+
+# Services in bootstrap_bare_services are bare-only bootstrap ownership:
+# - They are started only through generated bare scripts / deploy-bed bootstrap.
+# - They must never be emitted as deployer DaemonSets, otherwise deployer would depend
+#   on storage/runtime prerequisites that are themselves part of the bootstrap path.
+bootstrap_bare_services: ["etcd", "greptime", "tikv_pd", "tikv"]
+
+# Plain services are the steady-state ownership unit unless a specific (service,node) is already
+# covered by an atomic_group. In that case, the atomic_group owns that node and the plain service
+# selection only emits the remaining bind nodes.
+
+global_envs:
+  FLUXON_RELEASE_WHEEL_PY: "fluxon-0.2.1-py3-none-any.whl"
+  FLUXON_RELEASE_WHEEL_PYO3: "fluxon_pyo3-0.2.1-cp38-abi3-manylinux_2_28_x86_64.whl"
+  FLUXON_RELEASE_PYLIB_SRC_TAR: "pylib_src.tar.gz"
+  FLUXON_RELEASE_SHA256_FILE: "fluxon_release.sha256"
+  # Fluxon FS export root for bucket "fluxon-release" inside the container.
+  #
+  # Causal chain:
+  # - deployment/manual_dispatch_release.py dispatches local ./fluxon_release to ${HOSTWORKDIR}/fluxon_release on each node.
+  # - In self-host, ${HOSTWORKDIR} is the runtime-resolved host path root.
+  # - Fluxon FS S3 gateway maps bucket+key to ${remote_root_dir_abs}/<key>.
+  # - Therefore the export root must be ${HOSTWORKDIR}/fluxon_release to keep one path semantics end-to-end.
+  FLUXON_FS_EXPORT_FLUXON_RELEASE_REMOTE_ROOT_DIR_ABS: "${HOSTWORKDIR}/fluxon_release"
+  # Space-separated node ids (must match cluster_nodes[].hostname). Used to generate
+  # per-node instance keys (suffix with node id) and fluxon_fs export node lists.
+  FLUXON_CLUSTER_NODE_IDS: "example-node-a example-node-b"
+  # Use local artifacts prepared at ${HOSTWORKDIR}/fluxon_release.
+  #
+  # NOTE: Keep this value as a literal multi-line block (|-) instead of a folded one (>-).
+  # YAML folding may move bash comments into the middle of a line, and then bash treats
+  # everything after "#" as a comment, accidentally deleting part of the logic.
+  FLUXON_RELEASE_WHEEL_FETCH_CMD: |-
+    RELEASE_SRC_DIR="${HOSTWORKDIR}/fluxon_release"
+    VENV_DIR="${HOSTWORKDIR}/venv"
+    if [ ! -f "$RELEASE_SRC_DIR/install.py" ]; then
+      echo "Missing install.py in $RELEASE_SRC_DIR. Please prepare fluxon_release first."
+      exit 1
+    fi
+    if [ ! -f "$RELEASE_SRC_DIR/$FLUXON_RELEASE_SHA256_FILE" ]; then
+      echo "Missing $FLUXON_RELEASE_SHA256_FILE in $RELEASE_SRC_DIR. Please prepare fluxon_release first."
+      exit 1
+    fi
+
+    SRC_ROOT="${HOSTWORKDIR}/fluxon_src/$SERVICE"
+    mkdir -p "$SRC_ROOT"
+    python3 "$RELEASE_SRC_DIR/install.py" --release-dir "$RELEASE_SRC_DIR" --src-root "$SRC_ROOT" --venv-dir "$VENV_DIR" --sha256-file "$FLUXON_RELEASE_SHA256_FILE" --tar-name "$FLUXON_RELEASE_PYLIB_SRC_TAR" --wheel-py "$FLUXON_RELEASE_WHEEL_PY" --wheel-pyo3 "$FLUXON_RELEASE_WHEEL_PYO3"
+    WHEEL_DIR="$RELEASE_SRC_DIR"
+    FLUXON_SRC_ROOT="$SRC_ROOT"
+
+  # Ensure pip can resolve runtime dependencies declared by the fluxon wheel.
+  #
+  # Causal chain:
+  # - fluxon_py imports third-party packages (e.g. PyYAML) at runtime.
+  # - install.py installs the release wheels via pip and must allow dependency resolution.
+  # - A previous offline pip.conf (no-index=true) would make dependency installs fail.
+  FLUXON_PIP_CONF_CMD: rm -f ~/.pip/pip.conf
+
+  FLUXON_CLUSTER_NAME: "fluxon_testbed"
+  FLUXON_SHARED_MEM: "${HOSTWORKDIR}/shm1"
+  FLUXON_SHARED_FILE: "${HOSTWORKDIR}/shm1_files"
+  # Test-stack benchmark nodes use FLUXON_SHARED_MEM for mmap.file roots and
+  # FLUXON_SHARED_MEM2 as the shared-file/log root. Keep both under the current
+  # hostworkdir so benchmarks do not bleed into fluxon4 paths.
+  FLUXON_SHARED_MEM2: "${HOSTWORKDIR}/shm2_files"
+  FLUXON_PPROF_DURATION_SECONDS: ""
+
+  ETCD_FULL_ADDRESS: "${${ETCD__NODE_ID}__IP}:${ETCD__PORT}"
+  # Keep TiKV PD/TiKV endpoints in envs so the generated YAML heredocs only expand simple ${VAR}.
+  TIKV_PD_PEER_PORT: "33680"
+  TIKV_PD_ADVERTISE_IP: "${${TIKV_PD__NODE_ID}__IP}"
+  TIKV_PD_FULL_ADDRESS: "${${TIKV_PD__NODE_ID}__IP}:${TIKV_PD__PORT}"
+  TIKV_FULL_ADDRESS: "${${TIKV__NODE_ID}__IP}:${TIKV__PORT}"
+  TIKV_STATUS_FULL_ADDRESS: "${${TIKV__NODE_ID}__IP}:34180"
+  MONITOR_GREPTIMEDB_WRITE_URL: "http://${${GREPTIME__NODE_ID}__IP}:${GREPTIME__PORT}/v1/prometheus/write"
+  FLUXON_PROMETHEUS_BASE_URL: "http://${${GREPTIME__NODE_ID}__IP}:${GREPTIME__PORT}/v1/prometheus"
+  # Keep Greptime endpoints in envs and reference them from the per-service YAML heredoc.
+  #
+  # Causal chain:
+  # - The deployconf uses `${${NODE_ID}__IP}` placeholders, which are resolved by the deploy tooling
+  #   into concrete IPs.
+  # - The service entrypoints generate `all_config.yaml` via a bash heredoc with `${VAR}` expansion.
+  # - If we inline `${${NODE_ID}__IP}` inside the heredoc, bash tries to treat it as nested parameter
+  #   expansion and fails with `bad substitution`.
+  # - Therefore we must only expand simple `${VAR}` in the heredoc, and keep any `${${...}__IP}`
+  #   placeholder inside env values that are already resolved before bash runs.
+  MONITOR_GREPTIMEDB_BASE_URL: "http://${${GREPTIME__NODE_ID}__IP}:${GREPTIME__PORT}"
+  MONITOR_GREPTIMEDB_OTLP_LOG_API_URL: "http://${${GREPTIME__NODE_ID}__IP}:${GREPTIME__PORT}/v1/otlp/v1/logs"
+  # English note:
+  # - Self-host uses Fluxon Ops controller as the public HTTP entrypoint (embedded fluxon_cli web UI).
+  # - Therefore we bind the ops HTTP server to :19080.
+  # Fluxon FS master panel base URL (published to etcd by fluxon_fs_master; consumed by fluxon_cli).
+  FLUXON_FS_MASTER_PANEL_BASE_URL: "http://${FLUXON_FS_MASTER__NODE_ID__IP}:25080"
+  FLUXON_FS_MASTER_PANEL_LISTEN_ADDR: "0.0.0.0:25080"
+  # Fluxon Ops UI base URL (served by ops_controller embedded fluxon_cli).
+  FLUXON_OPS_UI_BASE_URL: "http://${OPS_CONTROLLER__NODE_ID__IP}:19080"
+  # Machine interface identity for ops_agent -> ops_controller pull-repair.
+  FLUXON_OPS_CONTROLLER_INSTANCE_KEY: "ops_controller_${OPS_CONTROLLER__NODE_ID}"
+  FLUXON_LOG: "info"
+  MASTER__PORT: "19080"
+  FLUXON_KVCLIENT_VALGRIND_ARGS: ""
+  # Keep master's advertise IP in envs and reference it from the per-service YAML heredoc.
+  #
+  # Causal chain:
+  # - The deployconf supports `${${NODE_ID}__IP}` placeholders that are resolved by the deploy tooling.
+  # - Service entrypoints generate `all_config.yaml` via a bash heredoc where `${...}` is expanded by bash.
+  # - If we inline `${${MASTER__NODE_ID}__IP}` inside the heredoc, bash treats it as nested parameter
+  #   expansion and fails with `bad substitution`.
+  # - Therefore we must route the resolved IP through a normal env var and only use `${VAR}` in the heredoc.
+  MASTER_ADVERTISE_IP: "${${MASTER__NODE_ID}__IP}"
+
+service:
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.0
+    port: 33579
+    in_container_port: 33579
+    node_bind:
+      node: ["example-node-a"]
+      hostport: true
+    entrypoint-mode: direct
+    entrypoint: |
+      ${HOSTWORKDIR}/fluxon_release/ext_images/etcd/etcd \
+        --data-dir ${HOSTWORKDIR}/monitor/etcd-data \
+        --name etcd0 \
+        --advertise-client-urls "http://0.0.0.0:33579" \
+        --listen-client-urls "http://0.0.0.0:33579" \
+        --listen-peer-urls "http://0.0.0.0:2480" \
+        --initial-advertise-peer-urls "http://0.0.0.0:2480" \
+        --initial-cluster "etcd0=http://0.0.0.0:2480" \
+        --initial-cluster-token "etcd-cluster" \
+        --initial-cluster-state "new" \
+        --auto-compaction-retention=1
+
+  greptime:
+    image: greptime/greptimedb:v0.15.1
+    port: 35030
+    in_container_port: 35030
+    node_bind:
+      node: ["example-node-a"]
+      hostport: true
+    entrypoint: |
+      set -euo pipefail
+      DATA_DIR="${HOSTWORKDIR}/monitor/greptimedb"
+      mkdir -p "${DATA_DIR}"
+      exec ${HOSTWORKDIR}/fluxon_release/ext_images/greptime/greptime standalone start \
+        --data-home "${DATA_DIR}" \
+        --http-addr 0.0.0.0:35030
+
+  tikv_pd:
+    image: pingcap/pd:v7.5.1
+    port: 33679
+    node_bind:
+      node: ["example-node-a"]
+      hostport: false
+      hostnetwork: true
+    entrypoint: |
+      set -euo pipefail
+      WORKDIR="${HOSTWORKDIR}/monitor/tikv/pd"
+      mkdir -p "${WORKDIR}"
+      cat > "${WORKDIR}/pd.toml" <<YAML
+      lease = 60
+      YAML
+      cat > "${WORKDIR}/pd_args.sh" <<EOF
+      declare -a PD_ARGS=(
+        --config "\$WORKDIR/pd.toml"
+        --name pd0
+        --data-dir "\$WORKDIR/pd-data"
+        --client-urls "http://0.0.0.0:${TIKV_PD__PORT}"
+        --advertise-client-urls "http://${TIKV_PD_ADVERTISE_IP}:${TIKV_PD__PORT}"
+        --peer-urls "http://0.0.0.0:${TIKV_PD_PEER_PORT}"
+        --advertise-peer-urls "http://${TIKV_PD_ADVERTISE_IP}:${TIKV_PD_PEER_PORT}"
+        --initial-cluster "pd0=http://${TIKV_PD_ADVERTISE_IP}:${TIKV_PD_PEER_PORT}"
+        --log-file "\$WORKDIR/pd.log"
+      )
+      EOF
+      exec "${HOSTWORKDIR}/fluxon_release/ext_images/tikv/start_pd.sh" --config "${WORKDIR}/pd_args.sh" --workdir "${WORKDIR}"
+
+  tikv:
+    image: pingcap/tikv:v7.5.1
+    port: 34160
+    node_bind:
+      node: ["example-node-a"]
+      hostport: false
+      hostnetwork: true
+    entrypoint: |
+      set -euo pipefail
+      WORKDIR="${HOSTWORKDIR}/monitor/tikv/store"
+      mkdir -p "${WORKDIR}"
+      cat > "${WORKDIR}/tikv.toml" <<YAML
+      [readpool.unified]
+      max-thread-count = 4
+
+      [readpool.storage]
+      high-concurrency = 2
+      normal-concurrency = 2
+      low-concurrency = 2
+
+      [readpool.coprocessor]
+      high-concurrency = 2
+      normal-concurrency = 2
+      low-concurrency = 2
+
+      [server]
+      end-point-max-concurrency = 8
+      background-thread-count = 2
+
+      [storage]
+      scheduler-concurrency = 2048
+      scheduler-worker-pool-size = 2
+
+      [raftstore]
+      apply-pool-size = 1
+      store-pool-size = 1
+
+      [rocksdb]
+      max-background-jobs = 2
+
+      [raftdb]
+      max-background-jobs = 2
+      YAML
+      cat > "${WORKDIR}/tikv_args.sh" <<EOF
+      declare -a TIKV_ARGS=(
+        --config "\$WORKDIR/tikv.toml"
+        --pd-endpoints "${TIKV_PD_FULL_ADDRESS}"
+        --addr "${TIKV_FULL_ADDRESS}"
+        --advertise-addr "${TIKV_FULL_ADDRESS}"
+        --status-addr "${TIKV_STATUS_FULL_ADDRESS}"
+        --data-dir "\$WORKDIR/tikv-data"
+        --log-file "\$WORKDIR/tikv.log"
+      )
+      EOF
+      exec "${HOSTWORKDIR}/fluxon_release/ext_images/tikv/start_tikv.sh" --config "${WORKDIR}/tikv_args.sh" --workdir "${WORKDIR}"
+
+  master:
+    node_bind:
+      node: ["example-node-a"]
+      hostport: false
+      hostnetwork: true
+    entrypoint: |
+      cd /
+      set -euo pipefail
+
+      eval "${FLUXON_PIP_CONF_CMD}"
+      eval "${FLUXON_RELEASE_WHEEL_FETCH_CMD}"
+
+      WORKDIR="${FLUXON_SHARED_MEM}/master_work"
+      CONFIG_PATH="${WORKDIR}/all_config.yaml"
+      mkdir -p "${WORKDIR}"
+      cat > "${CONFIG_PATH}" <<YAML
+      instance_key: "unified_master"
+      cluster_name: "${FLUXON_CLUSTER_NAME}"
+      port: 51051
+      etcd_endpoints:
+        - "${ETCD_FULL_ADDRESS}"
+      p2p_listen_port: 31100
+      network:
+        subnet_whitelist:
+          - "192.168.151.0/24"
+      monitoring:
+        prometheus_base_url: "${FLUXON_PROMETHEUS_BASE_URL}"
+        prom_remote_write_url:
+          - "${MONITOR_GREPTIMEDB_WRITE_URL}"
+        # Enable Greptime OTLP log exporter so the embedded panel (/logs) can query logs via Greptime SQL.
+        # Note: Ops/monitoring tools can query logs via Greptime SQL.
+        otlp_log_api:
+          otlp_endpoint: "${MONITOR_GREPTIMEDB_OTLP_LOG_API_URL}"
+          db_name: "public"
+          table_name: "fluxon_logs"
+      log_dir: "${FLUXON_SHARED_MEM}"
+      pprof_duration_seconds: ${FLUXON_PPROF_DURATION_SECONDS}
+      YAML
+
+      ${HOSTWORKDIR}/venv/bin/python -m fluxon_py.runtime.start_master -c "${CONFIG_PATH}" -w "${WORKDIR}"
+
+  owner:
+    node_bind:
+      node: ["example-node-a", "example-node-b"]
+      hostport: true
+      hostnetwork: false
+    entrypoint: |
+      cd /
+      set -euo pipefail
+
+      eval "${FLUXON_PIP_CONF_CMD}"
+      eval "${FLUXON_RELEASE_WHEEL_FETCH_CMD}"
+
+      WORKDIR="${FLUXON_SHARED_MEM}/owner_work_${NODE_ID}"
+      CONFIG_PATH="${WORKDIR}/all_config.yaml"
+      mkdir -p "${WORKDIR}" "${FLUXON_SHARED_FILE}"
+      cat > "${CONFIG_PATH}" <<YAML
+      instance_key: "owner_${NODE_ID}"
+      contribute_to_cluster_pool_size:
+        dram: 10401873920
+        vram: {}
+      pprof_duration_seconds: ${FLUXON_PPROF_DURATION_SECONDS}
+      # OTLP log exporter config is taken from master broadcast (master.monitoring.otlp_log_api).
+      fluxonkv_spec:
+        etcd_addresses:
+        - "${ETCD_FULL_ADDRESS}"
+        cluster_name: "${FLUXON_CLUSTER_NAME}"
+        shared_memory_path: "${FLUXON_SHARED_MEM}"
+        shared_file_path: "${FLUXON_SHARED_FILE}"
+        sub_cluster: "owner"
+      YAML
+      ${HOSTWORKDIR}/venv/bin/python -m fluxon_py.runtime.start_owner_kvclient -c "${CONFIG_PATH}" -w "${WORKDIR}"
+
+  fluxon_fs_master:
+    node_bind:
+      node: ["example-node-a"]
+      hostport: false
+      hostnetwork: true
+    entrypoint: |
+      cd /
+      set -euo pipefail
+
+      eval "${FLUXON_PIP_CONF_CMD}"
+      eval "${FLUXON_RELEASE_WHEEL_FETCH_CMD}"
+
+      cd "${FLUXON_SRC_ROOT}/fluxon_py/fluxon_fs"
+      WORKDIR="${HOSTWORKDIR}/fluxon_fs/master"
+      mkdir -p "${WORKDIR}" "${FLUXON_SHARED_MEM}" "${FLUXON_SHARED_FILE}" "${HOSTWORKDIR}/fluxon_release"
+      # English note:
+      # - fluxon_fs master CLI resolves relative --config / --workdir against the installed module path.
+      # - Pass explicit WORKDIR-anchored absolute paths here so startup never depends on cwd.
+      cd "${WORKDIR}"
+  
+      cat > "all_config.yaml" <<YAML
+      kvclient:
+        instance_key: "fluxon_fs_master"
+        fluxonkv_spec:
+          cluster_name: "${FLUXON_CLUSTER_NAME}"
+          shared_memory_path: "${FLUXON_SHARED_MEM}"
+          shared_file_path: "${FLUXON_SHARED_FILE}"
+      fluxon_fs:
+        master:
+          instance_key: "fluxon_fs_master"
+          pull_interval_ms: 1000
+        master_panel:
+          listen_addr: "${FLUXON_FS_MASTER_PANEL_LISTEN_ADDR}"
+          public_base_url: "${FLUXON_FS_MASTER_PANEL_BASE_URL}"
+          auto_refresh_interval_secs: 10
+          # English note:
+          # - access_db_path is the single source of truth for UI/S3 auth state.
+          # - bootstrap_access_model is required and seeds the first manager into an empty DB.
+          # - First boot serves /ui/setup/ and creates the initial manager account in the DB.
+          access_db_path: "${WORKDIR}/fluxon_fs_master_access.db"
+          bootstrap_access_model:
+            users:
+              - username: "admin"
+                password: "admin"
+                can_manage_users: true
+            scope_access: []
+          transfer_state_store:
+            tikv:
+              pd_endpoints:
+                - "${TIKV_PD_FULL_ADDRESS}"
+              key_prefix: "/fluxon_fs_transfer/"
+          s3_gateway:
+            # English note:
+            # - get_object_inflight_pieces provides bounded parallelism for S3 GET (bandwidth-bound instead of RTT-bound).
+            # - kv_miss_policy controls how KV piece cache is filled when a piece is missing.
+            get_object_inflight_pieces: 8
+            kv_miss_policy: "remote_read"
+        cache:
+          stale_window_ms: 5000
+          exports:
+            fluxon-release:
+              # English note:
+              # - remote_root_dir_abs is resolved from the runtime hostworkdir root.
+              # - For self-host test bed, ${HOSTWORKDIR} is the single authority path root.
+              # - release artifacts (including profiles/* variants) are dispatched to
+              #   <hostworkdir>/fluxon_release by deployment/manual_dispatch_release.py.
+              remote_root_dir_abs: "${FLUXON_FS_EXPORT_FLUXON_RELEASE_REMOTE_ROOT_DIR_ABS}"
+              cache_max_bytes: 1048576
+            deployer-runtime-node-a:
+              remote_root_dir_abs: "${HOSTWORKDIR}"
+              cache_max_bytes: 1048576
+            deployer-runtime-node-b:
+              remote_root_dir_abs: "${HOSTWORKDIR}"
+              cache_max_bytes: 1048576
+      YAML
+
+      ${HOSTWORKDIR}/venv/bin/python -m fluxon_py.fluxon_fs.master_cli -c "${WORKDIR}/all_config.yaml" -w "${WORKDIR}"
+
+  fluxon_fs_agent:
+    node_bind:
+      node: ["example-node-a", "example-node-b"]
+      hostport: false
+      hostnetwork: false
+    entrypoint: |
+      cd /
+      set -euo pipefail
+
+      eval "${FLUXON_PIP_CONF_CMD}"
+      eval "${FLUXON_RELEASE_WHEEL_FETCH_CMD}"
+
+      cd "${FLUXON_SRC_ROOT}/fluxon_py/fluxon_fs"
+      WORKDIR="${HOSTWORKDIR}/fluxon_fs/agent_${NODE_ID}"
+      mkdir -p "${WORKDIR}" "${FLUXON_SHARED_MEM}" "${FLUXON_SHARED_FILE}" "${HOSTWORKDIR}/fluxon_release"
+      # English note:
+      # - fluxon_fs agent passes --config as a relative path; keep YAML generation in WORKDIR
+      #   so future chdir changes do not silently pick up stale configs.
+      cd "${WORKDIR}"
+
+      # English note: keep node-specific exports in a tiny table so the shared YAML shape stays single-sourced.
+      case "$NODE_ID" in
+        example-node-a)
+          FS_AGENT_EXPORT_TABLE=$(cat <<EOF
+      fluxon-release|${FLUXON_FS_EXPORT_FLUXON_RELEASE_REMOTE_ROOT_DIR_ABS}
+      deployer-runtime-node-a|${HOSTWORKDIR}
+      EOF
+          )
+          ;;
+        example-node-b)
+          FS_AGENT_EXPORT_TABLE=$(cat <<EOF
+      deployer-runtime-node-b|${HOSTWORKDIR}
+      EOF
+          )
+          ;;
+        *)
+          echo "unsupported fluxon_fs_agent node: $NODE_ID"
+          exit 1
+          ;;
+      esac
+
+      {
+        cat <<YAML
+      kvclient:
+        instance_key: "fluxon_fs_agent_${NODE_ID}"
+        fluxonkv_spec:
+          cluster_name: "${FLUXON_CLUSTER_NAME}"
+          shared_memory_path: "${FLUXON_SHARED_MEM}"
+          shared_file_path: "${FLUXON_SHARED_FILE}"
+      fluxon_fs:
+        master:
+          instance_key: "fluxon_fs_master"
+        cache:
+          stale_window_ms: 5000
+          exports:
+      YAML
+
+        while IFS='|' read -r export_name remote_root_dir_abs; do
+          cat <<YAML
+            ${export_name}:
+              remote_root_dir_abs: "${remote_root_dir_abs}"
+              cache_max_bytes: 1048576
+      YAML
+        done <<< "${FS_AGENT_EXPORT_TABLE}"
+      } > "all_config.yaml"
+
+      ${HOSTWORKDIR}/venv/bin/python -m fluxon_py.fluxon_fs.agent_cli -c "${WORKDIR}/all_config.yaml" -w "${WORKDIR}"
+
+  ops_agent:
+    node_bind:
+      node: ["example-node-a", "example-node-b"]
+      hostport: false
+      hostnetwork: false
+    entrypoint: |
+      cd /
+      set -euo pipefail
+
+      eval "${FLUXON_PIP_CONF_CMD}"
+      eval "${FLUXON_RELEASE_WHEEL_FETCH_CMD}"
+
+      WORKDIR="${HOSTWORKDIR}/ops_agent/${NODE_ID}"
+      mkdir -p "${WORKDIR}" "${FLUXON_SHARED_MEM}" "${FLUXON_SHARED_FILE}"
+
+      OPS_AGENT_INSTANCE_KEY="fluxon_ops_${NODE_ID}"
+      case "${NODE_ID}" in
+        example-node-a)
+          OPS_AGENT_P2P_LISTEN_PORT=12112
+          ;;
+        example-node-b)
+          OPS_AGENT_P2P_LISTEN_PORT=12113
+          ;;
+        *)
+          echo "unsupported ops_agent node: ${NODE_ID}"
+          exit 1
+          ;;
+      esac
+
+      cat > "${WORKDIR}/ops_agent.yaml" <<YAML
+      kv_client:
+        instance_key: "${OPS_AGENT_INSTANCE_KEY}"
+        pprof_duration_seconds: 60
+        fluxonkv_spec:
+          cluster_name: "${FLUXON_CLUSTER_NAME}"
+          shared_memory_path: "${FLUXON_SHARED_MEM}"
+          shared_file_path: "${FLUXON_SHARED_FILE}"
+          p2p_listen_port: ${OPS_AGENT_P2P_LISTEN_PORT}
+      controller_instance_key: "${FLUXON_OPS_CONTROLLER_INSTANCE_KEY}"
+      hostworkdir: "${HOSTWORKDIR}"
+      YAML
+
+      ${HOSTWORKDIR}/venv/bin/python -m fluxon_py.runtime.start_ops_agent -c "${WORKDIR}/ops_agent.yaml" -w "${WORKDIR}"
+
+  ops_controller:
+    port: 19080
+    node_bind:
+      node: ["example-node-a"]
+      hostport: false
+      hostnetwork: true
+    entrypoint: |
+      cd /
+      set -euo pipefail
+
+      eval "${FLUXON_PIP_CONF_CMD}"
+      eval "${FLUXON_RELEASE_WHEEL_FETCH_CMD}"
+
+      WORKDIR="${HOSTWORKDIR}/ops_controller"
+      mkdir -p "${WORKDIR}" "${FLUXON_SHARED_MEM}" "${FLUXON_SHARED_FILE}"
+
+      cat > "${WORKDIR}/ops_controller.yaml" <<YAML
+      ops_controller:
+        kv_client:
+          instance_key: "ops_controller_${NODE_ID}"
+          pprof_duration_seconds: 60
+          fluxonkv_spec:
+            cluster_name: "${FLUXON_CLUSTER_NAME}"
+            shared_memory_path: "${FLUXON_SHARED_MEM}"
+            shared_file_path: "${FLUXON_SHARED_FILE}"
+            p2p_listen_port: 12102
+        panel:
+          max_body_bytes: 1073741824
+          auth:
+            username: "ops_admin"
+            password: "ops_password"
+        reconcile:
+          interval_ms: 5000
+
+      fluxon_cli:
+        etcd_endpoints:
+          - "http://${ETCD_FULL_ADDRESS}"
+        prometheus_base_url: "${FLUXON_PROMETHEUS_BASE_URL}"
+        greptime_sql:
+          base_url: "${MONITOR_GREPTIMEDB_BASE_URL}"
+          db: "public"
+          log_table: "fluxon_logs"
+        cluster_name: "${FLUXON_CLUSTER_NAME}"
+        member_kind: kv
+        output: web
+        http_listen_addr: "0.0.0.0:${MASTER__PORT}"
+      YAML
+
+      ${HOSTWORKDIR}/venv/bin/python -m fluxon_py.runtime.start_ops_controller -c "${WORKDIR}/ops_controller.yaml" -w "${WORKDIR}"
+
+  mpmc_demo_producer:
+    node_bind:
+      node: ["example-node-a"]
+      hostport: false
+      hostnetwork: false
+    entrypoint: |
+      cd /
+      set -euo pipefail
+
+      eval "${FLUXON_PIP_CONF_CMD}"
+      eval "${FLUXON_RELEASE_WHEEL_FETCH_CMD}"
+
+      WORKDIR="${HOSTWORKDIR}/mpmc_demo/producer_${NODE_ID}"
+      mkdir -p "${WORKDIR}" "${FLUXON_SHARED_MEM}"
+
+      cat > "${WORKDIR}/all_config.yaml" <<YAML
+      kvexternal:
+        instance_key: mpmc_demo_producer_base
+        fluxonkv_spec:
+          cluster_name: "${FLUXON_CLUSTER_NAME}"
+          shared_memory_path: "${FLUXON_SHARED_MEM}"
+          shared_file_path: "${HOSTWORKDIR}/mpmc_demo/shared_file_producer_${NODE_ID}"
+      mpmc_demo:
+        key: demo_mpmc
+        capacity: 20
+        ttl_seconds: 90
+        producer:
+          instance_key: a
+          interval_seconds: 0.05
+          count: 0
+        consumer:
+          instance_key: b
+          batch: 1
+      YAML
+
+      ${HOSTWORKDIR}/venv/bin/python - <<'PY'
+      import time
+      from pathlib import Path
+      import yaml
+      from fluxon_py.api_ext_chan import ChanRole, ChanType, new_or_bind_with_unique_key
+      from fluxon_py.config import FluxonKvClientConfig
+      from fluxon_py.kvclient import new_store
+      from fluxon_py.logging import init_logger
+
+      workdir = Path("${WORKDIR}")
+      cfg = yaml.safe_load((workdir / "all_config.yaml").read_text(encoding="utf-8"))
+      ext_cfg = dict(cfg["kvexternal"])
+      demo_cfg = dict(cfg["mpmc_demo"])
+      ext_cfg["instance_key"] = str(demo_cfg["producer"]["instance_key"])
+      store = new_store(FluxonKvClientConfig(ext_cfg)).unwrap("new_store failed")
+      logger = init_logger("testbed_mpmc_producer")
+      try:
+          producer = new_or_bind_with_unique_key(
+              store,
+              {"capacity": int(demo_cfg["capacity"]), "ttl_seconds": int(demo_cfg["ttl_seconds"])},
+              unique_id=str(demo_cfg["key"]),
+              chan_type=ChanType.MPMC,
+              chan_role=ChanRole.PRODUCER,
+          ).unwrap("bind producer failed")
+          while True:
+              ts_ms = int(time.time() * 1000)
+              payload = f"{demo_cfg['producer']['instance_key']}:{ts_ms}".encode("utf-8")
+              producer.put_data({"payload": payload, "ts_ms": ts_ms}).unwrap("put_data failed")
+              logger.info(f"[producer] sent: {payload.decode('utf-8')}")
+              time.sleep(float(demo_cfg["producer"]["interval_seconds"]))
+      finally:
+          store.close().unwrap("close failed")
+      PY
+
+  mpmc_demo_consumer:
+    node_bind:
+      node: ["example-node-a"]
+      hostport: false
+      hostnetwork: false
+    entrypoint: |
+      cd /
+      set -euo pipefail
+
+      eval "${FLUXON_PIP_CONF_CMD}"
+      eval "${FLUXON_RELEASE_WHEEL_FETCH_CMD}"
+
+      WORKDIR="${HOSTWORKDIR}/mpmc_demo/consumer_${NODE_ID}"
+      mkdir -p "${WORKDIR}" "${FLUXON_SHARED_MEM}"
+
+      cat > "${WORKDIR}/all_config.yaml" <<YAML
+      kvexternal:
+        instance_key: mpmc_demo_consumer_base
+        fluxonkv_spec:
+          cluster_name: "${FLUXON_CLUSTER_NAME}"
+          shared_memory_path: "${FLUXON_SHARED_MEM}"
+          shared_file_path: "${HOSTWORKDIR}/mpmc_demo/shared_file_consumer_${NODE_ID}"
+      mpmc_demo:
+        key: demo_mpmc
+        capacity: 20
+        ttl_seconds: 90
+        producer:
+          instance_key: a
+          interval_seconds: 0.05
+          count: 0
+        consumer:
+          instance_key: b
+          batch: 1
+      YAML
+
+      ${HOSTWORKDIR}/venv/bin/python - <<'PY'
+      import time
+      from pathlib import Path
+      import yaml
+      from fluxon_py.api_ext_chan import ChanRole, ChanType, new_or_bind_with_unique_key
+      from fluxon_py.api_error import ChannelClosedError
+      from fluxon_py.config import FluxonKvClientConfig
+      from fluxon_py.kvclient import new_store
+      from fluxon_py.logging import init_logger
+
+      workdir = Path("${WORKDIR}")
+      cfg = yaml.safe_load((workdir / "all_config.yaml").read_text(encoding="utf-8"))
+      ext_cfg = dict(cfg["kvexternal"])
+      demo_cfg = dict(cfg["mpmc_demo"])
+      ext_cfg["instance_key"] = str(demo_cfg["consumer"]["instance_key"])
+      store = new_store(FluxonKvClientConfig(ext_cfg)).unwrap("new_store failed")
+      logger = init_logger("testbed_mpmc_consumer")
+      try:
+          consumer = new_or_bind_with_unique_key(
+              store,
+              {"capacity": int(demo_cfg["capacity"]), "ttl_seconds": int(demo_cfg["ttl_seconds"])},
+              unique_id=str(demo_cfg["key"]),
+              chan_type=ChanType.MPMC,
+              chan_role=ChanRole.CONSUMER,
+          ).unwrap("bind consumer failed")
+          while True:
+              res = consumer.get_data(batch_size=int(demo_cfg["consumer"]["batch"]))
+              if not res.is_ok():
+                  err = res.unwrap_error()
+                  if isinstance(err, ChannelClosedError):
+                      break
+                  raise SystemExit(f"get_data failed: {err}")
+              for item in res.unwrap() or []:
+                  payload = item.get("payload", b"") if isinstance(item, dict) else item
+                  if isinstance(payload, (bytes, bytearray, memoryview)):
+                      logger.info(f"[consumer] got: {bytes(payload).decode('utf-8', 'ignore')}")
+                  else:
+                      logger.info(f"[consumer] got: {payload}")
+              time.sleep(0.2)
+      finally:
+          store.close().unwrap("close failed")
+      PY

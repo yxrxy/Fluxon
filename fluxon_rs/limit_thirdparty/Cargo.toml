@@ -1,0 +1,11 @@
+[package]
+name = "limit_thirdparty"
+version = "0.2.1"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1.0", features = ["full", "test-util"] }
+
+[features]
+# Re-export `tokio::spawn` for downstream tests via `limit_thirdparty::tokio::spawn`.
+export_spawn_for_tests = []

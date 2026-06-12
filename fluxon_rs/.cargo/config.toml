@@ -1,0 +1,6 @@
+[target.'cfg(target_os = "linux")']
+linker = "clang"
+rustflags = [
+  "-C", "link-arg=-Wl,-rpath,$ORIGIN/../../../fluxon_release/closed_sdk/lib",
+  "-C", "link-arg=-Wl,-rpath,$ORIGIN/../../../../fluxon_release/closed_sdk/lib",
+]

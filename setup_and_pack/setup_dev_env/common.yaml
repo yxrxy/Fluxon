@@ -1,0 +1,2 @@
+schema_version: 1
+base_config: ../nix/setup_dev_env_common.yaml

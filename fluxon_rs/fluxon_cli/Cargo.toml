@@ -1,0 +1,25 @@
+[package]
+name = "fluxon_cli"
+version = "0.2.1"
+edition = "2024"
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+thiserror = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+etcd-client = { workspace = true }
+axum = "0.6.20"
+url = "2"
+libc = { workspace = true }
+askama = { workspace = true }
+hyper = { workspace = true }
+hyper-rustls = { version = "0.24", default-features = false, features = ["native-tokio", "http1"] }
+fluxon_commu = { package = "fluxon_commu", path = "../fluxon_commu", default-features = false }
+fluxon_util = { path = "../fluxon_util" }
+fluxon_observability = { path = "../fluxon_observability" }

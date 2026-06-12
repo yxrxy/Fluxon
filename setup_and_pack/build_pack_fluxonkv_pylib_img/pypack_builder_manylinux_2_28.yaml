@@ -1,0 +1,89 @@
+user: root
+sudo: false
+base_image: quay.io/pypa/manylinux_2_28_x86_64
+image_name: pypack-builder-nix-experiment
+image_tag: latest
+inherit_env: true
+inherit_proxy: true
+inherit_timezone: true
+heavy_setup:
+  script_installs:
+  - name: setup_python_symlinks
+    commands:
+    - ln -sf /opt/python/cp310-cp310/bin/python /usr/local/bin/python3
+    - ln -sf /opt/python/cp310-cp310/bin/pip /usr/local/bin/pip3
+    # Ensure any 'python3' invocation (even those not honoring PATH precedence) resolve to CPython 3.10
+    - ln -sf /opt/python/cp310-cp310/bin/python /usr/bin/python3
+    - ln -sf /opt/python/cp310-cp310/bin/pip /usr/bin/pip3
+  - name: setup_pip_mirror
+    commands:
+    - echo "[global]" > /etc/pip.conf
+    - echo "index-url = https://mirrors.aliyun.com/pypi/simple/" >> /etc/pip.conf
+    - echo "trusted-host = mirrors.aliyun.com" >> /etc/pip.conf
+  - name: install_gcc_toolset_14_authority
+    commands:
+    - yum install -y gcc-toolset-14-gcc gcc-toolset-14-gcc-c++ gcc-toolset-14-binutils gcc-toolset-14-libstdc++-devel
+    - bash -lc 'toolroot=/opt/rh/gcc-toolset-14/root/usr/bin && ln -sf "$toolroot/gcc" /usr/local/bin/gcc && ln -sf "$toolroot/gcc" /usr/local/bin/cc && ln -sf "$toolroot/g++" /usr/local/bin/g++ && ln -sf "$toolroot/g++" /usr/local/bin/c++ && for tool in cpp ar nm ranlib strip ld; do if [ -x "$toolroot/$tool" ]; then ln -sf "$toolroot/$tool" "/usr/local/bin/$tool"; fi; done'
+    - /usr/local/bin/gcc --version | head -n 1
+    - /usr/local/bin/g++ --version | head -n 1
+  - name: install_maturin_cp38
+    commands:
+    - /opt/python/cp38-cp38/bin/pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple
+      --trusted-host mirrors.aliyun.com -U pip setuptools wheel maturin setuptools-rust pybind11
+  - name: install_maturin_cp39
+    commands:
+    - /opt/python/cp39-cp39/bin/pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple
+      --trusted-host mirrors.aliyun.com -U pip setuptools wheel maturin setuptools-rust pybind11
+  - name: install_maturin_cp310
+    commands:
+    - /opt/python/cp310-cp310/bin/pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple
+      --trusted-host mirrors.aliyun.com -U pip setuptools wheel maturin setuptools-rust pybind11
+  - name: install_maturin_cp311
+    commands:
+    - /opt/python/cp311-cp311/bin/pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple
+      --trusted-host mirrors.aliyun.com -U pip setuptools wheel maturin setuptools-rust pybind11
+  - name: link_maturin_symlink
+    commands:
+    - ln -sf /opt/python/cp310-cp310/bin/maturin /usr/local/bin/maturin
+  - name: install_rust_with_python
+    commands:
+    - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain __FLUXON_RUST_TOOLCHAIN__ --no-modify-path
+    - ln -sf /root/.cargo/bin/rustc /usr/local/bin/rustc
+    - ln -sf /root/.cargo/bin/cargo /usr/local/bin/cargo
+    - ln -sf /root/.cargo/bin/rustup /usr/local/bin/rustup
+    - rustc --version && cargo --version
+  - name: ensure_libstdcxx_soname
+    commands:
+    - if [ ! -e /usr/lib64/libstdc++.so ] && [ -e /usr/lib64/libstdc++.so.6 ]; then ln -s /usr/lib64/libstdc++.so.6 /usr/lib64/libstdc++.so; fi
+  - name: install_libunwind_from_epel
+    commands:
+    - yum install -y epel-release || true
+    - yum install -y --enablerepo=epel libunwind libunwind-devel
+  yum_packages:
+  - clang
+  - clang-devel
+  - libaio
+  - libaio-devel
+  - libfabric
+  - libfabric-devel
+  - libibverbs
+  - libibverbs-devel
+  - libpsm2
+  - hwloc
+  - hwloc-devel
+  - libnl3-devel
+  - openssl-devel
+  - numactl
+  - numactl-devel
+  - libtool
+  - ninja-build
+  - pkgconfig
+  pip_packages:
+  - pyscript-util
+  - PyYAML
+  - requests
+  - setuptools
+  - wheel
+  - setuptools-rust
+  - pybind11
+  - gitignorefile

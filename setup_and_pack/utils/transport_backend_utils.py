@@ -1,0 +1,17 @@
+from __future__ import annotations
+
+TRANSPORT_BACKENDS: tuple[str, ...] = ("fastws", "tquic", "sockudo_ws", "tcp", "tcp_thread")
+RDMA_BACKENDS: tuple[str, ...] = ("closed_sdk",)
+TRANSPORT_PROFILE_IDS: dict[str, str] = {
+    "fastws": "fluxon_fastws",
+    "tquic": "fluxon_tquic",
+    "sockudo_ws": "fluxon_sockudo_ws",
+    "tcp": "fluxon_tcp",
+    "tcp_thread": "fluxon_tcp_thread",
+}
+
+__all__ = [
+    "TRANSPORT_BACKENDS",
+    "RDMA_BACKENDS",
+    "TRANSPORT_PROFILE_IDS",
+]

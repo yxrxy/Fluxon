@@ -1,0 +1,30 @@
+<table>
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Provider Paths</th>
+      <th>Nodes</th>
+      <th style="text-align:right">Open</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% if rows.is_empty() %}
+      <tr>
+        <td colspan="4" class="muted">No exports configured</td>
+      </tr>
+    {% else %}
+      {% for row in rows %}
+        <tr data-filter-row data-filter-text="{{ row.filter_text }}">
+          <td>
+            <a class="link mono" href="{{ row.bucket_href }}">{{ row.name }}</a>
+          </td>
+          <td class="muted">{{ row.provider_display_html|safe }}</td>
+          <td class="mono">{{ row.nodes_count }}</td>
+          <td style="text-align:right">
+            <a class="link" href="{{ row.bucket_href }}">Browse</a>
+          </td>
+        </tr>
+      {% endfor %}
+    {% endif %}
+  </tbody>
+</table>

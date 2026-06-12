@@ -1,0 +1,23 @@
+error[E0277]: the trait bound `String: HeapBackedStableOwner` is not satisfied
+ --> tests/compile_tests/scoped_sync_async_bridge/fail/stack_owner_is_not_stable_owner.rs:5:33
+  |
+ 5 |     let _ = borrow_stable_owner(&stack_value);
+   |             ------------------- ^^^^^^^^^^^^ the trait `HeapBackedStableOwner` is not implemented for `String`
+   |             |
+   |             required by a bound introduced by this call
+   |
+help: the following other types implement trait `HeapBackedStableOwner`
+  --> src/run_async_from_sync.rs
+   |
+   | impl<T: ?Sized> HeapBackedStableOwner for Box<T> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Box<T>`
+   | impl<T: ?Sized> HeapBackedStableOwner for Arc<T> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Arc<T>`
+note: required by a bound in `borrow_stable_owner`
+  --> src/run_async_from_sync.rs
+   |
+   | pub fn borrow_stable_owner<O>(owner: &O) -> &O::Target
+   |        ------------------- required by a bound in this function
+   | where
+   |     O: HeapBackedStableOwner + ?Sized,
+   |        ^^^^^^^^^^^^^^^^^^^^^ required by this bound in `borrow_stable_owner`

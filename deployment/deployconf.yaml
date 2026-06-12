@@ -1,0 +1,1140 @@
+# Checked-in deployconf files under deployment/ must stay generic.
+# Put machine-specific copies under deployment/local/ and do not commit them.
+namespace: fluxon-example
+
+name_prefix: fluxon-example
+image: fluxon_quick_start:0.2.1
+
+cluster_nodes:
+  - hostname: example-node-a
+    ip: 192.0.2.10
+    # hostworkdir is exposed to runtime scripts through ${HOSTWORKDIR}
+    hostworkdir: /opt/example/fluxon/deployment/example_deploy
+    mounts:
+      - /opt/example/fluxon: /fluxon_mount
+      - /var/run/docker.sock: /var/run/docker.sock
+      # - /dev/infiniband: /dev/infiniband
+      # - /sys/class/infiniband: /sys/class/infiniband
+      # - /sys/class/net: /sys/class/net
+      # - /dev/shm: /dev/shm
+
+  # Multi-node entries are intentionally disabled for single-node dev on example-node-a.
+  # - hostname: example-node-c
+  #   ip: 192.0.2.12
+  #   hostworkdir: /opt/example/fluxon_auto_deploy
+
+  # - hostname: example-node-d
+  #   ip: 192.0.2.13
+  #   hostworkdir: /opt/example/fluxon_auto_deploy
+
+  - hostname: example-node-b
+    ip: 192.0.2.11
+    # hostworkdir is exposed to runtime scripts through ${HOSTWORKDIR}
+    hostworkdir: /opt/example/fluxon_auto_deploy
+
+global_envs:
+  # FLUXON_REPO: ""
+  # FLUXON_REPO_BRANCH: "main"
+  # FLUXON_DEPLOY_REPO: ""
+  # FLUXON_DEPLOY_REPO_BRANCH: "main"
+  FLUXON_RELEASE_WHEEL_PY: "fluxon-0.2.1-py3-none-any.whl"
+  FLUXON_RELEASE_WHEEL_PYO3: "fluxon_pyo3-0.2.1-cp38-abi3-manylinux_2_28_x86_64.whl"
+  FLUXON_RELEASE_PYLIB_SRC_TAR: "pylib_src.tar.gz"
+  FLUXON_RELEASE_SHA256_FILE: "fluxon_release.sha256"
+  # Use local artifacts prepared at ${HOSTWORKDIR}/download/fluxon_release.
+  #
+  # NOTE: Keep this value as a literal multi-line block (|-) instead of a folded one (>-).
+  # YAML folding may move bash comments into the middle of a line, and then bash treats
+  # everything after "#" as a comment, accidentally deleting part of the logic.
+  FLUXON_RELEASE_WHEEL_FETCH_CMD: |-
+    RELEASE_SRC_DIR="${HOSTWORKDIR}/download/fluxon_release"
+    VENV_DIR="${HOSTWORKDIR}/venv"
+    if [ ! -f "$RELEASE_SRC_DIR/install.py" ]; then
+      echo "Missing install.py in $RELEASE_SRC_DIR. Please prepare fluxon_release first."
+      exit 1
+    fi
+    if [ ! -f "$RELEASE_SRC_DIR/$FLUXON_RELEASE_SHA256_FILE" ]; then
+      echo "Missing $FLUXON_RELEASE_SHA256_FILE in $RELEASE_SRC_DIR. Please prepare fluxon_release first."
+      exit 1
+    fi
+
+    SRC_ROOT="${HOSTWORKDIR}/fluxon_src/$SERVICE"
+    mkdir -p "$SRC_ROOT"
+    python3 "$RELEASE_SRC_DIR/install.py" --release-dir "$RELEASE_SRC_DIR" --src-root "$SRC_ROOT" --venv-dir "$VENV_DIR" --sha256-file "$FLUXON_RELEASE_SHA256_FILE" --tar-name "$FLUXON_RELEASE_PYLIB_SRC_TAR" --wheel-py "$FLUXON_RELEASE_WHEEL_PY" --wheel-pyo3 "$FLUXON_RELEASE_WHEEL_PYO3"
+    WHEEL_DIR="$RELEASE_SRC_DIR"
+    FLUXON_SRC_ROOT="$SRC_ROOT"
+  # Install DOCA / ibverbs toolchain (shared by RDMA-capable clients)
+  FLUXON_DOCA_SETUP_CMD: >-
+    echo "we don't need rdma now"
+  #   # DOCA_PATH_SUFFIX="3.2.1/ubuntu22.04/x86_64/";
+  #   # BASE_URL="https://linux.mellanox.com/public/repo/doca";
+  #   # DOCA_URL="$BASE_URL/$DOCA_PATH_SUFFIX";
+  #   # curl "$BASE_URL/GPG-KEY-Mellanox.pub" | gpg --dearmor > /etc/apt/trusted.gpg.d/GPG-KEY-Mellanox.pub;
+  #   # echo "deb [signed-by=/etc/apt/trusted.gpg.d/GPG-KEY-Mellanox.pub] $DOCA_URL ./" > /etc/apt/sources.list.d/doca.list;
+  #   # apt-get update;
+  #   # apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev;
+  # Configure pip index for online installs (shared by all services).
+  FLUXON_PIP_CONF_CMD: mkdir -p ~/.pip && printf "[global]\nindex-url = https://pypi.org/simple\n" > ~/.pip/pip.conf
+
+  # FLUXON_PIP_CONF_CMD: >-
+  #   mkdir -p ~/.pip &&
+  #   printf "[global]\nindex-url = https://pypi.tuna.tsinghua.edu.cn/simple\n" > ~/.pip/pip.conf;
+  FLUXON_CLUSTER_NAME: "fluxon-example-cluster"
+  FLUXON_SHARED_MEM: "${HOSTWORKDIR}/shm1"
+  FLUXON_SHARED_FILE: "${HOSTWORKDIR}/shm1_files"
+  FLUXON_SHARED_MEM2: "${HOSTWORKDIR}/shm2"
+  FLUXON_SHARED_FILE2: "${HOSTWORKDIR}/shm2_files"
+  FLUXON_SHARED_MEM_RELAY: "${HOSTWORKDIR}/shm3"
+  FLUXON_SHARED_FILE_RELAY: "${HOSTWORKDIR}/shm3_files"
+  FLUXON_SHARED_MEM_RELAY2: "${HOSTWORKDIR}/shm4"
+  FLUXON_SHARED_FILE_RELAY2: "${HOSTWORKDIR}/shm4_files"
+  # Enable pprof by setting seconds > 0; empty means disabled.
+  FLUXON_PPROF_DURATION_SECONDS: ""
+
+  # Simplified static addresses for Mooncake mode (single-node dev)
+  ETCD_FULL_ADDRESS: "${${ETCD__NODE_ID}__IP}:${ETCD__PORT}"
+  MONITOR_GREPTIMEDB_WRITE_URL: "http://${${GREPTIME__NODE_ID}__IP}:${GREPTIME__PORT}/v1/prometheus/write"
+  FLUXON_PROMETHEUS_BASE_URL: "http://${${GREPTIME__NODE_ID}__IP}:${GREPTIME__PORT}/v1/prometheus"
+  BENCHMARK_COORDINATOR_ADDRESS: "${${KVCLIENT_BENCHMARK_COORDINATOR__NODE_ID}__IP}:${KVCLIENT_BENCHMARK_COORDINATOR__PORT}"
+  FLUXON_LOG: "info"
+  BENCHMARK_NODE_BENCH1_LOG: "${HOSTWORKDIR}/benchmark_node_bench1.log"
+  BENCHMARK_NODE_BENCH2_LOG: "${HOSTWORKDIR}/benchmark_node_bench2.log"
+  MASTER__PORT: "18080"
+
+  # KvClient start option switch:
+  # - Set to "--valgrind" to start KvClient under valgrind (memcheck).
+  # - Keep empty to start KvClient normally.
+  # FLUXON_KVCLIENT_VALGRIND_ARGS: "--valgrind"
+  FLUXON_KVCLIENT_VALGRIND_ARGS: ""
+  
+  # AUTO ENV (unified __ style):
+  # - NODE_ID: set by system
+  # - ${SERVICE__PORT}, ${SERVICE__NODE_ID}
+  # - ${${SERVICE__NODE_ID}__IP}
+
+release_ext_images:
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.0
+  greptime:
+    image: greptime/greptimedb:v0.15.1
+  tikv_pd:
+    image: pingcap/pd:v7.5.1
+  tikv:
+    image: pingcap/tikv:v7.5.1
+
+service:
+  # Per-component external port mapping
+  # hostport is defined per-port; when true, the container will also open the same hostPort.
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.0
+    port: 32579
+    in_container_port: 2379
+    node_bind:
+      node: ["example-node-a"]
+      hostport: true
+    entrypoint-mode: direct # no bash
+    entrypoint: |
+      /usr/local/bin/etcd \
+        --data-dir /etcd-data \
+        --name etcd0 \
+        --advertise-client-urls "http://0.0.0.0:2379" \
+        --listen-client-urls "http://0.0.0.0:2379" \
+        --listen-peer-urls "http://0.0.0.0:2380" \
+        --initial-advertise-peer-urls "http://0.0.0.0:2380" \
+        --initial-cluster "etcd0=http://0.0.0.0:2380" \
+        --initial-cluster-token "etcd-cluster" \
+        --initial-cluster-state "new" \
+        --auto-compaction-retention=1
+  greptime:
+    image: greptime/greptimedb:v0.15.1
+    port: 34030
+    in_container_port: 34030
+    node_bind:
+      node: ["example-node-a"]
+      hostport: true
+    entrypoint: |
+      # GreptimeDB（开发模式）：硬编码数据目录到 ${HOSTWORKDIR}/monitor/greptimedb
+      set -euo pipefail
+      DATA_DIR="${HOSTWORKDIR}/monitor/greptimedb"
+      mkdir -p "${DATA_DIR}"
+      exec greptime standalone start \
+        --data-home "${DATA_DIR}" \
+        --http-addr 0.0.0.0:34030
+  grafana:
+    image: grafana/grafana:10.0.0
+    port: 33031
+    in_container_port: 33030
+    node_bind:
+      node: ["example-node-a"]
+      hostport: true
+    entrypoint: |
+      # 准备 Grafana 配置与数据源（使用容器内可写目录，随容器回收）
+      set -euo pipefail
+
+      # 使用 /var/lib/grafana（grafana 用户可写）
+      PROV_ROOT="/var/lib/grafana/provisioning"
+      PROV_DASH_DIR="${PROV_ROOT}/dashboards"
+      PROV_DS_DIR="${PROV_ROOT}/datasources"
+      DASH_DIR="/var/lib/grafana/dashboards"
+      mkdir -p "${PROV_DASH_DIR}" "${PROV_DS_DIR}" "${DASH_DIR}"
+
+      # 生成 Grafana dashboards provisioning（指向 /etc/grafana/dashboards）
+      cat >"${PROV_DASH_DIR}/dashboards.yaml" <<'YAML'
+      apiVersion: 1
+      providers:
+        - name: default
+          orgId: 1
+          folder: ""
+          type: file
+          disableDeletion: false
+          updateIntervalSeconds: 10
+          allowUiUpdates: true
+          options:
+            path: /var/lib/grafana/dashboards
+      YAML
+
+      # 生成 Grafana datasources 配置
+      # 优先使用 MONITOR_GREPTIMEDB_WRITE_URL 推导基础地址
+      write_url="${MONITOR_GREPTIMEDB_WRITE_URL:-}"
+      if echo "${write_url}" | grep -Eq '^https?://'; then
+        base_url="${write_url%/v1/prometheus/write}"
+      else
+        base_url="http://${write_url}"
+      fi
+      datasource_url="${base_url}/v1/prometheus"
+      cat >"${PROV_DS_DIR}/datasources.yaml" <<YAML
+      apiVersion: 1
+      datasources:
+        - name: Prometheus
+          type: prometheus
+          access: proxy
+          url: ${datasource_url}
+          isDefault: true
+          editable: true
+          uid: prometheus
+      YAML
+
+      # Copy built-in dashboards from the mounted repo (bootstrap mount only; runtime code uses ${HOSTWORKDIR}/fluxon).
+      if [ -d "/fluxon_mount/scripts/observer/docker/grafana/dashboards" ]; then
+        find "/fluxon_mount/scripts/observer/docker/grafana/dashboards" -maxdepth 1 -type f -name "*.json" -print0 | xargs -0 -I{} cp -f {} "${DASH_DIR}/"
+      fi
+
+      # 使用硬编码端口与 provisioning 根目录
+      export GF_SERVER_HTTP_PORT=33030
+      export GF_PATHS_PROVISIONING="${PROV_ROOT}"
+      exec /run.sh
+
+  # mooncake-metadata:
+  #   image: fluxon_quick_start:0.2.1
+  #   port: 30880
+  #   in_container_port: 30880
+  #   node_bind:
+  #     node: ["example-node-a"]
+  #     hostport: true
+  #   entrypoint: |
+  #     cd /
+
+  #     # git clone ${FLUXON_DEPLOY_REPO} fluxon_deploy
+  #     # git checkout ${FLUXON_DEPLOY_REPO_BRANCH}
+  #     # cd $(basename ${FLUXON_DEPLOY_REPO} .git)
+  #     # git clone ${FLUXON_REPO} fluxon
+  #     # git checkout ${FLUXON_REPO_BRANCH}
+      
+  #     cd fluxon && pip3 install .[dev] && cd ..
+  #     pip3 install ${FLUXON_WHEEL_PATH_IN_DEPLOY_REPO}
+      
+  #     cd fluxon/examples
+      #     python3 start_metadata_server.py --port 30880
+
+  master:
+    node_bind:
+      node: ["example-node-a"]
+      hostport: false
+      hostnetwork: true
+    entrypoint: |
+      cd /
+      set -euo pipefail
+
+      eval "${FLUXON_PIP_CONF_CMD}"
+      eval "${FLUXON_RELEASE_WHEEL_FETCH_CMD}"
+
+      # git clone ${FLUXON_DEPLOY_REPO} fluxon_deploy
+      # git checkout ${FLUXON_DEPLOY_REPO_BRANCH}
+      # cd $(basename ${FLUXON_DEPLOY_REPO} .git)
+      # git clone ${FLUXON_REPO} fluxon
+      # git checkout ${FLUXON_REPO_BRANCH}
+
+      # fluxon_release/install.py performs source extraction and pip installs.
+      
+      cd "${FLUXON_SRC_ROOT}/examples"
+      cat > "all_config.yaml" <<YAML
+      master:
+        etcd_endpoints:
+          - "${ETCD_FULL_ADDRESS}"
+        cluster_name: "${FLUXON_CLUSTER_NAME}"
+        instance_key: "unified_master"
+        monitoring:
+          prometheus_base_url: "${FLUXON_PROMETHEUS_BASE_URL}"
+          prom_remote_write_url:
+            - "${MONITOR_GREPTIMEDB_WRITE_URL}"
+        #network:
+        #  subnet_whitelist:
+        #  - 192.0.2.0/24
+        port: 50051
+        p2p_listen_port: 31000
+        log_dir: "${FLUXON_SHARED_MEM}"
+        pprof_duration_seconds: ${FLUXON_PPROF_DURATION_SECONDS}
+      YAML
+
+      python3 -m fluxon_py.runtime.start_master -c all_config.yaml -w "${FLUXON_SHARED_MEM}/master_work"
+      # python3 start_mooncake_master.py --port 50051
+
+  kvclient_with_mem:
+    port: 18181
+    node_bind:
+      node: ["example-node-a"]
+      hostport: true
+      hostnetwork: false
+      docker_networks: ["a"]
+    entrypoint: |
+      cd /
+      set -euo pipefail
+
+      eval "${FLUXON_PIP_CONF_CMD}"
+      eval "${FLUXON_RELEASE_WHEEL_FETCH_CMD}"
+
+      # git clone ${FLUXON_DEPLOY_REPO} fluxon_deploy
+      # git checkout ${FLUXON_DEPLOY_REPO_BRANCH}
+      # cd $(basename ${FLUXON_DEPLOY_REPO} .git)
+      # git clone ${FLUXON_REPO} fluxon
+      # git checkout ${FLUXON_REPO_BRANCH}
+      
+      eval "${FLUXON_DOCA_SETUP_CMD}"
+
+      # fluxon_release/install.py performs source extraction and pip installs.
+      
+      cd "${FLUXON_SRC_ROOT}/examples"
+      cat > "all_config.yaml" <<YAML
+      kvclient:
+        instance_key: "owner_${NODE_ID}"
+        contribute_to_cluster_pool_size:
+          dram: 10401873920
+          vram: {}
+        pprof_duration_seconds: ${FLUXON_PPROF_DURATION_SECONDS}
+        fluxonkv_spec:
+          etcd_addresses:
+          - "${ETCD_FULL_ADDRESS}"
+          cluster_name: "${FLUXON_CLUSTER_NAME}"
+          shared_memory_path: "${FLUXON_SHARED_MEM}"
+          shared_file_path: "${FLUXON_SHARED_FILE}"
+          # redis_compat:
+          #   listen_addr: "0.0.0.0:16379"
+          sub_cluster: "producer_side"
+      YAML
+      # export UCX_LOG_LEVEL=info
+      python3 -m fluxon_py.runtime.start_owner_kvclient -c all_config.yaml -w "${FLUXON_SHARED_MEM}/owner_work_${NODE_ID}"
+  
+  kvclient_with_mem2:
+    port: 18182
+    node_bind:
+      node: ["example-node-a"]
+      hostport: true
+      # hostnetwork: true
+      hostnetwork: false
+      # Keep owner clients and FS external clients in the same Docker network to avoid network partition.
+      docker_networks: ["a"]
+    entrypoint: |
+      cd /
+      set -euo pipefail
+
+      eval "${FLUXON_PIP_CONF_CMD}"
+      eval "${FLUXON_RELEASE_WHEEL_FETCH_CMD}"
+
+      # git clone ${FLUXON_DEPLOY_REPO} fluxon_deploy
+      # git checkout ${FLUXON_DEPLOY_REPO_BRANCH}
+      # cd $(basename ${FLUXON_DEPLOY_REPO} .git)
+      # git clone ${FLUXON_REPO} fluxon
+      # git checkout ${FLUXON_REPO_BRANCH}
+
+      eval "${FLUXON_DOCA_SETUP_CMD}"
+      
+      # fluxon_release/install.py performs source extraction and pip installs.
+      
+      cd "${FLUXON_SRC_ROOT}/examples"
+      cat > "all_config.yaml" <<YAML
+      kvclient:
+        instance_key: "owner2_${NODE_ID}"
+        contribute_to_cluster_pool_size:
+          dram: 10401873920
+          vram: {}
+        pprof_duration_seconds: ${FLUXON_PPROF_DURATION_SECONDS}
+        fluxonkv_spec:
+          etcd_addresses:
+          - "${ETCD_FULL_ADDRESS}"
+          cluster_name: "${FLUXON_CLUSTER_NAME}"
+          shared_memory_path: "${FLUXON_SHARED_MEM2}"
+          shared_file_path: "${FLUXON_SHARED_FILE2}"
+          sub_cluster: "consumer_side"
+      YAML
+      # export UCX_LOG_LEVEL=info
+      python3 -m fluxon_py.runtime.start_owner_kvclient -c all_config.yaml -w "${FLUXON_SHARED_MEM2}/owner_work_${NODE_ID}"
+
+  fluxon_fs_master:
+    node_bind:
+      node: ["example-node-a"]
+      hostport: false
+      hostnetwork: false
+      docker_networks: ["a"]
+    entrypoint: |
+      cd /
+      set -euo pipefail
+
+      eval "${FLUXON_PIP_CONF_CMD}"
+      eval "${FLUXON_RELEASE_WHEEL_FETCH_CMD}"
+
+      cd "${FLUXON_SRC_ROOT}/examples"
+      WORKDIR="./fluxon_work/fluxon_fs_master_work"
+      mkdir -p "${WORKDIR}" "${FLUXON_SHARED_MEM}" "${FLUXON_SHARED_FILE}"
+
+      cat > "all_config.yaml" <<YAML
+      kvclient:
+        instance_key: "fluxon_fs_master"
+        fluxonkv_spec:
+          cluster_name: "${FLUXON_CLUSTER_NAME}"
+          shared_memory_path: "${FLUXON_SHARED_MEM}"
+          shared_file_path: "${FLUXON_SHARED_FILE}"
+      fluxon_fs:
+        master:
+          instance_key: "fluxon_fs_master"
+          pull_interval_ms: 1000
+        master_panel:
+          listen_addr: "0.0.0.0:8091"
+          public_base_url: "http://127.0.0.1:8091"
+          auto_refresh_interval_secs: 10
+          # English note:
+          # - access_db_path is the single source of truth for UI/S3 auth state.
+          # - transfer stays disabled until an explicit TiKV-backed transfer_state_store is configured.
+          # - First boot serves /ui/setup/ and creates the initial manager account in the DB.
+          access_db_path: "${WORKDIR}/fluxon_fs_master_access.db"
+          s3_gateway:
+            get_object_inflight_pieces: 8
+            kv_miss_policy: "remote_read"
+        cache:
+          stale_window_ms: 5000
+          rules:
+            - dir_abs: "${HOSTWORKDIR}/fluxon_fs_local_shared"
+              cache_mode: "read_through"
+              write_mode: "write_through"
+              kv_key_prefix: "/fluxon_fs_cache/local_shared/"
+              bytes_field_key: "bytes"
+              max_cache_bytes: 1048576
+              on_refresh_error: "apply_stale_window"
+          exports:
+            demo:
+              remote_root_dir_abs: "${HOSTWORKDIR}/fluxon_fs_export_root"
+              nodes:
+                - "fluxon_fs_writer"
+              cache_max_bytes: 1048576
+      YAML
+
+      python3 start_fluxon_fs_master.py -c all_config.yaml -w "${WORKDIR}"
+
+
+  fluxon_fs_writer:
+    node_bind:
+      node: ["example-node-a"]
+      hostport: false
+      hostnetwork: false
+      docker_networks: ["a"]
+    entrypoint: |
+      cd /
+      set -euo pipefail
+
+      eval "${FLUXON_PIP_CONF_CMD}"
+      eval "${FLUXON_RELEASE_WHEEL_FETCH_CMD}"
+
+      cd "${FLUXON_SRC_ROOT}/examples"
+      WORKDIR="./fluxon_work/fluxon_fs_writer_work"
+      mkdir -p "${WORKDIR}" "${HOSTWORKDIR}/fluxon_fs_export_root" "${HOSTWORKDIR}/fluxon_fs_local_shared" "${FLUXON_SHARED_MEM}" "${FLUXON_SHARED_FILE}"
+
+      cat > "all_config.yaml" <<YAML
+      kvclient:
+        instance_key: "fluxon_fs_writer"
+        fluxonkv_spec:
+          cluster_name: "${FLUXON_CLUSTER_NAME}"
+          shared_memory_path: "${FLUXON_SHARED_MEM}"
+          shared_file_path: "${FLUXON_SHARED_FILE}"
+      fluxon_fs:
+        cache:
+          stale_window_ms: 5000
+          rules:
+            - dir_abs: "${HOSTWORKDIR}/fluxon_fs_local_shared"
+              cache_mode: "read_through"
+              write_mode: "write_through"
+              kv_key_prefix: "/fluxon_fs_cache/local_shared/"
+              bytes_field_key: "bytes"
+              max_cache_bytes: 1048576
+              on_refresh_error: "apply_stale_window"
+          exports:
+            demo:
+              remote_root_dir_abs: "${HOSTWORKDIR}/fluxon_fs_export_root"
+              nodes:
+                - "fluxon_fs_writer"
+              cache_max_bytes: 1048576
+      fluxon_fs_demo:
+        remote_export_root_dir_abs: "${HOSTWORKDIR}/fluxon_fs_export_root"
+        remote_relpath: "shared/demo.txt"
+        local_root_dir_abs: "${HOSTWORKDIR}/fluxon_fs_local_shared"
+        local_relpath: "shared/demo.txt"
+        interval_ms: 30000
+        small_bytes: 128
+        large_bytes: 3145728
+      YAML
+
+      python3 start_fluxon_fs_writer.py -c all_config.yaml -w "${WORKDIR}"
+
+  fluxon_fs_reader:
+    node_bind:
+      node: ["example-node-a"]
+      hostport: false
+      hostnetwork: false
+      docker_networks: ["a"]
+    entrypoint: |
+      cd /
+      set -euo pipefail
+
+      eval "${FLUXON_PIP_CONF_CMD}"
+      eval "${FLUXON_RELEASE_WHEEL_FETCH_CMD}"
+
+      cd "${FLUXON_SRC_ROOT}/examples"
+      WORKDIR="./fluxon_work/fluxon_fs_reader_work"
+      mkdir -p "${WORKDIR}" "${HOSTWORKDIR}/fluxon_fs_local_shared" "${FLUXON_SHARED_MEM}" "${FLUXON_SHARED_FILE}"
+
+      cat > "all_config.yaml" <<YAML
+      kvclient:
+        instance_key: "fluxon_fs_reader"
+        fluxonkv_spec:
+          cluster_name: "${FLUXON_CLUSTER_NAME}"
+          shared_memory_path: "${FLUXON_SHARED_MEM}"
+          shared_file_path: "${FLUXON_SHARED_FILE}"
+      fluxon_fs:
+        master:
+          instance_key: "fluxon_fs_master"
+        cache:
+          stale_window_ms: 5000
+          rules:
+            - dir_abs: "${HOSTWORKDIR}/fluxon_fs_local_shared"
+              cache_mode: "read_through"
+              write_mode: "write_through"
+              kv_key_prefix: "/fluxon_fs_cache/local_shared/"
+              bytes_field_key: "bytes"
+              max_cache_bytes: 1048576
+              on_refresh_error: "apply_stale_window"
+          exports:
+            demo:
+              remote_root_dir_abs: "${HOSTWORKDIR}/fluxon_fs_export_root"
+              nodes:
+                - "fluxon_fs_writer"
+              cache_max_bytes: 1048576
+      fluxon_fs_demo:
+        mount_dir_abs: "/fluxon_fs/demo"
+        export_name: "demo"
+        remote_relpath: "shared/demo.txt"
+        local_root_dir_abs: "${HOSTWORKDIR}/fluxon_fs_local_shared"
+        local_relpath: "shared/demo.txt"
+        interval_ms: 1000
+        wait_file_poll_ms: 1000
+        print_limit_bytes: 200
+      YAML
+
+      python3 start_fluxon_fs_reader.py -c all_config.yaml -w "${WORKDIR}"
+
+
+  kvclient_relay:
+    port: 18183
+    node_bind:
+      node: ["example-node-a"]
+      hostport: true
+      hostnetwork: false
+      docker_networks: ["a", "c"]
+    entrypoint: |
+      cd /
+      set -euo pipefail
+
+      eval "${FLUXON_PIP_CONF_CMD}"
+      eval "${FLUXON_RELEASE_WHEEL_FETCH_CMD}"
+
+      eval "${FLUXON_DOCA_SETUP_CMD}"
+
+      # fluxon_release/install.py performs source extraction and pip installs.
+
+      cd "${FLUXON_SRC_ROOT}/examples"
+      cat > "all_config.yaml" <<YAML
+      kvclient:
+        instance_key: "relay_${NODE_ID}"
+        contribute_to_cluster_pool_size:
+          dram: 10401873920
+          vram: {}
+        pprof_duration_seconds: ${FLUXON_PPROF_DURATION_SECONDS}
+        fluxonkv_spec:
+          etcd_addresses:
+          - "${ETCD_FULL_ADDRESS}"
+          cluster_name: "${FLUXON_CLUSTER_NAME}"
+          shared_memory_path: "${FLUXON_SHARED_MEM_RELAY}"
+          shared_file_path: "${FLUXON_SHARED_FILE_RELAY}"
+          p2p_listen_port: 31001
+          sub_cluster: "relay"
+      YAML
+      # export UCX_LOG_LEVEL=info
+      python3 -m fluxon_py.runtime.start_owner_kvclient -c all_config.yaml -w "${FLUXON_SHARED_MEM}/consumer_owner_work_${NODE_ID}"
+
+  kvclient_relay2:
+    port: 18184
+    node_bind:
+      node: ["example-node-a"]
+      hostport: true
+      hostnetwork: false
+      docker_networks: ["b", "c"]
+    entrypoint: |
+      cd /
+      set -euo pipefail
+
+      eval "${FLUXON_PIP_CONF_CMD}"
+      eval "${FLUXON_RELEASE_WHEEL_FETCH_CMD}"
+
+      eval "${FLUXON_DOCA_SETUP_CMD}"
+
+      # fluxon_release/install.py performs source extraction and pip installs.
+
+      cd "${FLUXON_SRC_ROOT}/examples"
+      cat > "all_config.yaml" <<YAML
+      kvclient:
+        instance_key: "relay2_${NODE_ID}"
+        contribute_to_cluster_pool_size:
+          dram: 10401873920
+          vram: {}
+        pprof_duration_seconds: ${FLUXON_PPROF_DURATION_SECONDS}
+        fluxonkv_spec:
+          etcd_addresses:
+          - "${ETCD_FULL_ADDRESS}"
+          cluster_name: "${FLUXON_CLUSTER_NAME}"
+          shared_memory_path: "${FLUXON_SHARED_MEM_RELAY2}"
+          shared_file_path: "${FLUXON_SHARED_FILE_RELAY2}"
+          p2p_listen_port: 31002
+          sub_cluster: "relay"
+      YAML
+      # export UCX_LOG_LEVEL=info
+      python3 -m fluxon_py.runtime.start_owner_kvclient -c all_config.yaml -w "${FLUXON_SHARED_MEM2}/consumer_owner_work_${NODE_ID}"
+
+  mpmc_demo_producer:
+    port: 18185
+    node_bind:
+      node: ["example-node-a"]
+      hostport: true
+      # hostnetwork: true
+      hostnetwork: false
+      docker_networks: ["a"]
+    entrypoint: |
+      cd /
+      set -euo pipefail
+
+      eval "${FLUXON_PIP_CONF_CMD}"
+      eval "${FLUXON_RELEASE_WHEEL_FETCH_CMD}"
+
+      # fluxon_release/install.py performs source extraction and pip installs.
+
+      cd "${FLUXON_SRC_ROOT}/examples"
+      cat > "all_config.yaml" <<YAML
+      kvexternal:
+        instance_key: mpmc_demo_producer_base
+        fluxonkv_spec:
+          cluster_name: "${FLUXON_CLUSTER_NAME}"
+          shared_memory_path: "${FLUXON_SHARED_MEM}"
+          shared_file_path: "${FLUXON_SHARED_FILE}"
+      mpmc_demo:
+        key: demo_mpmc
+        capacity: 20
+        ttl_seconds: 90
+        producer:
+          instance_key: a
+          interval_seconds: 0.05
+          count: 0
+        consumer:
+          instance_key: b
+          batch: 1
+      YAML
+      #sleep inf
+      # This container is a debug shell (sleep inf). Exec into it to run demos.
+      python3 - <<'PY'
+      import time
+      from pathlib import Path
+      import yaml
+      from fluxon_py.api_ext_chan import ChanRole, ChanType, new_or_bind_with_unique_key
+      from fluxon_py.config import FluxonKvClientConfig
+      from fluxon_py.kvclient import new_store
+      from fluxon_py.logging import init_logger
+
+      workdir = Path.cwd()
+      cfg = yaml.safe_load(Path("all_config.yaml").read_text(encoding="utf-8"))
+      ext_cfg = dict(cfg["kvexternal"])
+      demo_cfg = dict(cfg["mpmc_demo"])
+      ext_cfg["instance_key"] = str(demo_cfg["producer"]["instance_key"])
+      store = new_store(FluxonKvClientConfig(ext_cfg)).unwrap("new_store failed")
+      logger = init_logger("deploy_mpmc_producer")
+      try:
+          producer = new_or_bind_with_unique_key(
+              store,
+              {"capacity": int(demo_cfg["capacity"]), "ttl_seconds": int(demo_cfg["ttl_seconds"])},
+              unique_id=str(demo_cfg["key"]),
+              chan_type=ChanType.MPMC,
+              chan_role=ChanRole.PRODUCER,
+          ).unwrap("bind producer failed")
+          while True:
+              ts_ms = int(time.time() * 1000)
+              payload = f"{demo_cfg['producer']['instance_key']}:{ts_ms}".encode("utf-8")
+              producer.put_data({"payload": payload, "ts_ms": ts_ms}).unwrap("put_data failed")
+              logger.info(f"[producer] sent: {payload.decode('utf-8')}")
+              time.sleep(float(demo_cfg["producer"]["interval_seconds"]))
+      finally:
+          store.close().unwrap("close failed")
+      PY
+
+  mpmc_demo_consumer:
+    port: 18186
+    node_bind:
+      node: ["example-node-a"]
+      hostport: true
+      # hostnetwork: true
+      hostnetwork: false
+      docker_networks: ["b"]
+    entrypoint: |
+      cd /
+      set -euo pipefail
+
+      eval "${FLUXON_PIP_CONF_CMD}"
+      eval "${FLUXON_RELEASE_WHEEL_FETCH_CMD}"
+
+      # fluxon_release/install.py performs source extraction and pip installs.
+
+      cd "${FLUXON_SRC_ROOT}/examples"
+      cat > "all_config.yaml" <<YAML
+      kvexternal:
+        instance_key: mpmc_demo_consumer_base
+        fluxonkv_spec:
+          cluster_name: "${FLUXON_CLUSTER_NAME}"
+          shared_memory_path: "${FLUXON_SHARED_MEM2}"
+          shared_file_path: "${FLUXON_SHARED_FILE2}"
+      mpmc_demo:
+        key: demo_mpmc
+        capacity: 20
+        ttl_seconds: 90
+        producer:
+          instance_key: a
+          interval_seconds: 0.05
+          count: 0
+        consumer:
+          instance_key: b
+          batch: 1
+      YAML
+
+      #sleep inf
+      # This container is a debug shell (sleep inf). Exec into it to run demos.
+      python3 - <<'PY'
+      import time
+      from pathlib import Path
+      import yaml
+      from fluxon_py.api_ext_chan import ChanRole, ChanType, new_or_bind_with_unique_key
+      from fluxon_py.api_error import ChannelClosedError
+      from fluxon_py.config import FluxonKvClientConfig
+      from fluxon_py.kvclient import new_store
+      from fluxon_py.logging import init_logger
+
+      cfg = yaml.safe_load(Path("all_config.yaml").read_text(encoding="utf-8"))
+      ext_cfg = dict(cfg["kvexternal"])
+      demo_cfg = dict(cfg["mpmc_demo"])
+      ext_cfg["instance_key"] = str(demo_cfg["consumer"]["instance_key"])
+      store = new_store(FluxonKvClientConfig(ext_cfg)).unwrap("new_store failed")
+      logger = init_logger("deploy_mpmc_consumer")
+      try:
+          consumer = new_or_bind_with_unique_key(
+              store,
+              {"capacity": int(demo_cfg["capacity"]), "ttl_seconds": int(demo_cfg["ttl_seconds"])},
+              unique_id=str(demo_cfg["key"]),
+              chan_type=ChanType.MPMC,
+              chan_role=ChanRole.CONSUMER,
+          ).unwrap("bind consumer failed")
+          while True:
+              res = consumer.get_data(batch_size=int(demo_cfg["consumer"]["batch"]))
+              if not res.is_ok():
+                  err = res.unwrap_error()
+                  if isinstance(err, ChannelClosedError):
+                      break
+                  raise SystemExit(f"get_data failed: {err}")
+              for item in res.unwrap() or []:
+                  payload = item.get("payload", b"") if isinstance(item, dict) else item
+                  if isinstance(payload, (bytes, bytearray, memoryview)):
+                      logger.info(f"[consumer] got: {bytes(payload).decode('utf-8', 'ignore')}")
+                  else:
+                      logger.info(f"[consumer] got: {payload}")
+              time.sleep(0.2)
+      finally:
+          store.close().unwrap("close failed")
+      PY
+
+  xfer_controller:
+    port: 18187
+    node_bind:
+      node: ["example-node-a"]
+      hostport: true
+      hostnetwork: false
+      docker_networks: ["a"]
+    entrypoint: |
+      cd /
+      set -euo pipefail
+
+      eval "${FLUXON_PIP_CONF_CMD}"
+      eval "${FLUXON_RELEASE_WHEEL_FETCH_CMD}"
+      apt update
+      apt install -y rclone
+      echo "Configure rclone locally before using xfer_controller."
+      echo "Example: rclone config create test sftp host 192.0.2.10 user example_user pass \"\$(rclone obscure 'CHANGE_ME')\""
+
+      # fluxon_release/install.py performs source extraction and pip installs.
+
+      cd "${FLUXON_SRC_ROOT}/examples/fluxon_xfer_panel"
+      cat > "all_config.yaml" <<YAML
+      controller:
+        instance_key: "fluxon_xfer_accessor_controller"
+        kvexternal:
+          fluxonkv_spec:
+            cluster_name: "${FLUXON_CLUSTER_NAME}"
+            shared_memory_path: "${FLUXON_SHARED_MEM}"
+            shared_file_path: "${FLUXON_SHARED_FILE}"
+        db_path: ./xfer_panel.sqlite3
+        bootstrap_admin:
+          username: admin
+          password: CHANGE_ME
+        auth:
+          token_ttl_seconds: 3600
+          pbkdf2_iterations: 200000
+        rclone_bin: /usr/bin/rclone
+        rclone_copy_flags:
+          - -P
+          - --ignore-existing
+          - --stats
+          - 1s
+          - --stats-one-line
+          - --stats-one-line-date
+        max_concurrent_transfers: 1
+        dir_list_max_entries: 200
+      YAML
+
+      python3 start_controller.py -c all_config.yaml -w ./fluxon_work/xfer_controller_work
+
+  xfer_webpanel:
+    port: 18188
+    node_bind:
+      node: ["example-node-a"]
+      hostport: true
+      hostnetwork: false
+      docker_networks: ["b"]
+    entrypoint: |
+      cd /
+      set -euo pipefail
+
+      eval "${FLUXON_PIP_CONF_CMD}"
+      eval "${FLUXON_RELEASE_WHEEL_FETCH_CMD}"
+
+      # fluxon_release/install.py performs source extraction and pip installs.
+
+      cd "${FLUXON_SRC_ROOT}/examples/fluxon_xfer_panel"
+      cat > "all_config.yaml" <<YAML
+      webpanel:
+        instance_key: "fluxon_xfer_accessor_webpanel_${NODE_ID}"
+        controller_instance_key: "fluxon_xfer_accessor_controller"
+        kvexternal:
+          fluxonkv_spec:
+            cluster_name: "${FLUXON_CLUSTER_NAME}"
+            shared_memory_path: "${FLUXON_SHARED_MEM2}"
+            shared_file_path: "${FLUXON_SHARED_FILE2}"
+        http:
+          listen_addr: 0.0.0.0
+          port: ${XFER_WEBPANEL__PORT}
+        ui:
+          progress_poll_seconds: 2
+      YAML
+
+      python3 start_webpanel.py -c all_config.yaml -w ./fluxon_work/xfer_webpanel_work
+
+  kvclient_benchmark_coordinator:
+    node_bind:
+      node: ["example-node-a"]
+      hostport: true
+      port: 17779
+      hostnetwork: false
+    in_container_port: 17779
+    entrypoint: |
+      cd /
+      set -euo pipefail
+
+      eval "${FLUXON_PIP_CONF_CMD}"
+      eval "${FLUXON_RELEASE_WHEEL_FETCH_CMD}"
+
+      # git clone ${FLUXON_DEPLOY_REPO} fluxon_deploy
+      # git checkout ${FLUXON_DEPLOY_REPO_BRANCH}
+      # cd $(basename ${FLUXON_DEPLOY_REPO} .git)
+      # git clone ${FLUXON_REPO} fluxon
+      # git checkout ${FLUXON_REPO_BRANCH}
+      
+      # fluxon_release/install.py performs source extraction and pip installs.
+      
+      # Overwrite benchmark_config.py (Python dict config) for MPMC (消息队列) 模式
+      cd "${FLUXON_SRC_ROOT}/fluxon_test_stack"
+      cat > benchmark_config.py <<'PY'
+      from __future__ import annotations
+      from typing import Any, Dict
+      import os
+      
+      ETCD = os.environ['ETCD_FULL_ADDRESS']
+      CLUSTER_NAME = os.environ['FLUXON_CLUSTER_NAME']
+      SHARED_MEM = os.environ['FLUXON_SHARED_MEM']
+      SHARED_FILE = os.environ['FLUXON_SHARED_FILE']
+      SHARED_MEM2 = os.environ['FLUXON_SHARED_MEM2']
+      SHARED_FILE2 = os.environ['FLUXON_SHARED_FILE2']
+      # Addresses from injected env tokens (no hardcoding)
+      METADATA_IP = os.environ.get('MOONCAKE_METADATA__NODE_ID__IP')
+      MASTER_IP = os.environ.get('MASTER__NODE_ID__IP')
+      METADATA_PORT = int(os.environ.get('MOONCAKE_METADATA__PORT', 100000000000000000)) # left a dummy int port for fluxon mode
+      MASTER_PORT = int(os.environ.get('MASTER__PORT'))
+      
+      CONFIG: Dict[str, Any] = {
+          'server_type': 'manully',
+          'benchmark': {
+              # 使用 MPMC 模式（消息队列）
+              # 'mode': 'MPMC',
+              'mode': 'KVSTORE',
+              'workers': 20,
+              # 'max_benchmark_seconds': 180,
+              'max_benchmark_seconds': 30,
+              # Metrics warmup window (seconds). Ensure max_benchmark_seconds - metric_warmup_seconds >= 30.
+              'metric_warmup_seconds': 0,
+              'value_size': 20360128,  #20360128, # 28MB, 256 tokens of Qwen3-1.7B
+              # 可选：针对给定 baseline_value_size（即上面的 value_size），
+              # 在以下 workers_list 中逐个切换并发线程数进行压测。
+              # 配置为空列表时表示不做 workers sweep。
+              'workers_list': [10, 20],
+              # 可选：针对给定 baseline_workers（即上面的 workers），
+              # 在以下 value_size_list 中逐个切换 value_size 进行压测。
+              # 配置为空列表时表示不做 value_size sweep。
+              'value_size_list': [2097152, 8388608, 33554432],
+              'consumer_sim_handle_ms_range': [700, 1500]
+          },
+      # KV 全局基准配置（与 kv_base 结构一致）
+      'kv_base': {
+          'instance_key': 'single-node-default',
+          'contribute_to_cluster_pool_size': {'dram': 0, 'vram': {}},
+          'fluxonkv_spec': {
+              'cluster_name': CLUSTER_NAME,
+              'shared_memory_path': SHARED_MEM,
+              'shared_file_path': SHARED_FILE,
+          },
+              # 如果需要切 mooncake，可以在这里启用 mooncake_spec
+              # 'mooncake_spec': {
+              #     'local_buffer_size': 134217728,
+              #     'metadata_server': f"http://{METADATA_IP}:{METADATA_PORT}/metadata",
+              #     'master_server_address': f"{MASTER_IP}:{MASTER_PORT}",
+              #     'etcd_addresses': [ETCD],
+              # },
+          },
+          # MQ 全局基准配置
+          'mq_new_or_bind_unique_key': "benchmq",
+          'mq_base': {
+              'capacity': 40,
+              'ttl_seconds': 90,
+          },
+          # 每节点覆盖：kv + mq_role + mq
+          'node_overrides': [
+              {
+                  'kv': {'instance_key': 'bench1'},
+                  'mq_role': 'producer',
+                  'mq': {'weight': 1.0},
+              },
+              {
+                  'kv': {'instance_key': 'bench2', 'fluxonkv_spec': {
+                       'etcd_addresses': [ETCD],
+                       'cluster_name': CLUSTER_NAME,
+                       'shared_memory_path': SHARED_MEM2,
+                   }},
+                  'mq_role': 'consumer',
+                  # 'mq': {'weight': 1.0},
+              },
+              # {
+              #     'kv': {'instance_key': 'bench3', 'fluxonkv_spec': {
+              #         'etcd_addresses': [ETCD],
+              #         'cluster_name': CLUSTER_NAME,
+              #         'shared_memory_path': SHARED_MEM2,
+              #     }},
+              #     'mq_role': 'consumer',
+              #     # 'mq': {'weight': 1.0},
+              # },
+              # {
+              #     'kv': {'instance_key': 'bench4'},
+              #     'mq_role': 'consumer',
+              # },
+              # {
+              #     'kv': {'instance_key': 'bench5', 'fluxonkv_spec': {
+              #         'etcd_addresses': [ETCD],
+              #         'cluster_name': CLUSTER_NAME,
+              #         'shared_memory_path': SHARED_MEM2,
+              #     }},
+              #     'mq_role': 'consumer',
+              # }
+          ],
+          'coordinator': {'port': 17779},
+      }
+      PY
+
+      # Run coordinator from current directory
+      python3 distributed_benchmark_coordinator.py
+      sleep inf
+
+  kvclient_benchmark_node:
+    node_bind:
+      node: ["example-node-b"]
+      hostport: false
+      hostnetwork: true
+    entrypoint: |
+      cd /
+      set -euo pipefail
+
+      eval "${FLUXON_PIP_CONF_CMD}"
+      eval "${FLUXON_RELEASE_WHEEL_FETCH_CMD}"
+
+      # git clone ${FLUXON_DEPLOY_REPO} fluxon_deploy
+      # git checkout ${FLUXON_DEPLOY_REPO_BRANCH}
+      # cd $(basename ${FLUXON_DEPLOY_REPO} .git)
+      # git clone ${FLUXON_REPO} fluxon
+      # git checkout ${FLUXON_REPO_BRANCH}
+      
+      # fluxon_release/install.py performs source extraction and pip installs.
+      pip3 install pyinstrument
+
+      # Enter benchmark example directory and run node
+      cd "${FLUXON_SRC_ROOT}/fluxon_test_stack"
+      LOG_PATH="${BENCHMARK_NODE_BENCH1_LOG}"
+      echo "[benchmark_node] logging to: ${LOG_PATH}"
+      export UCX_LOG_LEVEL=info
+      python3 distributed_benchmark_node.py --coordinator ${BENCHMARK_COORDINATOR_ADDRESS} -k "bench1" #\
+        # > "${LOG_PATH}" 2>&1
+      sleep inf
+  
+  kvclient_benchmark_node2:
+    node_bind:
+      node: ["example-node-a"]
+      hostport: false
+      hostnetwork: true
+    entrypoint: |
+      cd /
+      set -euo pipefail
+
+      eval "${FLUXON_PIP_CONF_CMD}"
+      eval "${FLUXON_RELEASE_WHEEL_FETCH_CMD}"
+
+      # git clone ${FLUXON_DEPLOY_REPO} fluxon_deploy
+      # git checkout ${FLUXON_DEPLOY_REPO_BRANCH}
+      # cd $(basename ${FLUXON_DEPLOY_REPO} .git)
+      # git clone ${FLUXON_REPO} fluxon
+      # git checkout ${FLUXON_REPO_BRANCH}
+      
+      # fluxon_release/install.py performs source extraction and pip installs.
+      pip3 install pyinstrument
+
+      # Enter benchmark example directory and run node
+      cd "${FLUXON_SRC_ROOT}/fluxon_test_stack"
+      LOG_PATH="${BENCHMARK_NODE_BENCH2_LOG}"
+      echo "[benchmark_node2] logging to: ${LOG_PATH}"
+      export UCX_LOG_LEVEL=info
+      python3 distributed_benchmark_node.py --coordinator ${BENCHMARK_COORDINATOR_ADDRESS} -k "bench2" #\
+        # > "${LOG_PATH}" 2>&1
+      sleep inf
+
+  # kvclient_benchmark_node3:
+  #   image: fluxon_quick_start:0.2.1
+  #   node_bind:
+  #     node: ["example-node-a"]
+  #     hostport: false
+  #     hostnetwork: true
+  #   entrypoint: |
+  #     cd /
+
+  #     # git clone ${FLUXON_DEPLOY_REPO} fluxon_deploy
+  #     # git checkout ${FLUXON_DEPLOY_REPO_BRANCH}
+  #     # cd $(basename ${FLUXON_DEPLOY_REPO} .git)
+  #     # git clone ${FLUXON_REPO} fluxon
+  #     # git checkout ${FLUXON_REPO_BRANCH}
+      
+  #     cd fluxon && pip3 install .[dev] && cd ..
+  #     pip3 install ${FLUXON_WHEEL_PATH_IN_DEPLOY_REPO} --force-reinstall
+  #     pip3 install pyinstrument
+
+  #     # Enter benchmark example directory and run node
+  #     cd /fluxon/fluxon_test_stack
+  #     LOG_PATH="${BENCHMARK_NODE_BENCH3_LOG}"
+  #     echo "[benchmark_node3] logging to: ${LOG_PATH}"
+  #     python3 distributed_benchmark_node.py --coordinator ${BENCHMARK_COORDINATOR_ADDRESS} -k "bench3" #\
+  #       # > "${LOG_PATH}" 2>&1
+  #     sleep inf
+
+  # kvclient_benchmark_node4:
+  #   image: fluxon_quick_start:0.2.1
+  #   node_bind:
+  #     node: ["example-node-a"]
+  #     hostport: false
+  #     hostnetwork: true
+  #   entrypoint: |
+  #     cd /
+
+  #     # git clone ${FLUXON_DEPLOY_REPO} fluxon_deploy
+  #     # git checkout ${FLUXON_DEPLOY_REPO_BRANCH}
+  #     # cd $(basename ${FLUXON_DEPLOY_REPO} .git)
+  #     # git clone ${FLUXON_REPO} fluxon
+  #     # git checkout ${FLUXON_REPO_BRANCH}
+      
+  #     cd fluxon && pip3 install .[dev] && cd ..
+  #     pip3 install ${FLUXON_WHEEL_PATH_IN_DEPLOY_REPO} --force-reinstall
+  #     pip3 install pyinstrument
+
+  #     # Enter benchmark example directory and run node
+  #     cd /fluxon/fluxon_test_stack
+  #     LOG_PATH="${BENCHMARK_NODE_BENCH3_LOG}"
+  #     echo "[benchmark_node3] logging to: ${LOG_PATH}"
+  #     python3 distributed_benchmark_node.py --coordinator ${BENCHMARK_COORDINATOR_ADDRESS} -k "bench4" #\
+  #       # > "${LOG_PATH}" 2>&1
+  #     sleep inf
+
+  # kvclient_benchmark_node5:
+  #   image: fluxon_quick_start:0.2.1
+  #   node_bind:
+  #     node: ["example-node-a"]
+  #     hostport: false
+  #     hostnetwork: true
+  #   entrypoint: |
+  #     cd /
+
+  #     # git clone ${FLUXON_DEPLOY_REPO} fluxon_deploy
+  #     # git checkout ${FLUXON_DEPLOY_REPO_BRANCH}
+  #     # cd $(basename ${FLUXON_DEPLOY_REPO} .git)
+  #     # git clone ${FLUXON_REPO} fluxon
+  #     # git checkout ${FLUXON_REPO_BRANCH}
+      
+  #     cd fluxon && pip3 install .[dev] && cd ..
+  #     pip3 install ${FLUXON_WHEEL_PATH_IN_DEPLOY_REPO} --force-reinstall
+  #     pip3 install pyinstrument
+
+  #     # Enter benchmark example directory and run node
+  #     cd /fluxon/fluxon_test_stack
+  #     LOG_PATH="${BENCHMARK_NODE_BENCH3_LOG}"
+  #     echo "[benchmark_node3] logging to: ${LOG_PATH}"
+  #     python3 distributed_benchmark_node.py --coordinator ${BENCHMARK_COORDINATOR_ADDRESS} -k "bench5" #\
+  #       # > "${LOG_PATH}" 2>&1
+  #     sleep inf

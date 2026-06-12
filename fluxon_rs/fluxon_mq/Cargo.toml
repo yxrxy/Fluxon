@@ -1,0 +1,30 @@
+[package]
+name = "fluxon_mq"
+version = "0.2.1"
+edition = "2021"
+
+[lib]
+name = "fluxon_mq"
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+parking_lot = { workspace = true }
+paste = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+etcd-client = { workspace = true }
+fluxon_util = { path = "../fluxon_util" }
+fluxon_observability = { path = "../fluxon_observability" }
+fluxon_commu = { package = "fluxon_commu", path = "../fluxon_commu", default-features = false }
+downcast-rs = { workspace = true }
+fluxon_framework_compiled = { path = "../fluxon_framework_compiled" }
+fluxon_framework = { path = "../fluxon_framework" }
+limit_thirdparty = { path = "../limit_thirdparty" }
+
+# No conditional python feature; python-facing logic lives in fluxon_pyo3
+# bindings, and fluxon_util is always built with pyo3 available.

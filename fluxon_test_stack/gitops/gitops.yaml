@@ -1,0 +1,82 @@
+interval: 60
+
+retention:
+  max_age_days: 7
+
+repos:
+  - addr: git@github.com:Tele-AI/fluxon.git
+    follow:
+      - branch: big_step2
+        run:
+          name_prefix: fluxon_ci
+          commands:
+            - python3 fluxon_test_stack/pack_test_stack_rsc.py --all-profiles -c fluxon_test_stack/ci_test_list.yaml
+            - |
+                python3 - <<'PY'
+                from __future__ import annotations
+
+                from pathlib import Path
+                import glob
+                import yaml
+
+                workdir_root = Path.cwd().resolve()
+                out_dir = (workdir_root / ".dever" / "deployer_bootstrap").resolve()
+                out_dir.mkdir(parents=True, exist_ok=True)
+                out_path = out_dir / "cluster_ssh_bootstrap.yaml"
+
+                # These wheels are required by examples/fluxon_deployer/cluster_ssh_bootstrap.py.
+                fluxon_wheels = sorted(glob.glob(str(workdir_root / "fluxon_release" / "fluxon-*.whl")))
+                fluxon_pyo3_wheels = sorted(glob.glob(str(workdir_root / "fluxon_release" / "fluxon_pyo3-*.whl")))
+                if len(fluxon_wheels) != 1:
+                    raise RuntimeError(f"expected exactly one fluxon wheel, got: {fluxon_wheels}")
+                if len(fluxon_pyo3_wheels) != 1:
+                    raise RuntimeError(f"expected exactly one fluxon_pyo3 wheel, got: {fluxon_pyo3_wheels}")
+
+                cfg = {
+                    "workdir": str(out_dir / "remote_workdir"),
+                    "wheels": {
+                        "fluxon_py": fluxon_wheels[0],
+                        "fluxon_pyo3": fluxon_pyo3_wheels[0],
+                    },
+                    "cluster": {
+                        "etcd_endpoints": ["10.126.126.231:2379"],
+                        "cluster_name": "fluxon_deployer_cluster",
+                        "monitoring": {
+                            "prometheus_base_url": "http://10.126.126.231:4010/v1/prometheus",
+                        },
+                    },
+                    "nodes": [
+                        {
+                            "name": "infra44-ThinkStation-PX",
+                            "host": "10.126.126.231",
+                            "ssh": {
+                                "local": True,
+                                "port": 22,
+                                "user": "zyc",
+                                # Intentionally no password by default.
+                                # If your SSH requires a password, set ssh.password explicitly.
+                                # If you use an SSH key, set ssh.identity_file explicitly.
+                            },
+                            "roles": ["master", "controller", "agent", "owner"],
+                            "ports": {
+                                "p2p_owner": 13000,
+                                "p2p_agent": 13001,
+                                "p2p_controller": 13002,
+                                "master_port": 50062,
+                                "master_http_port": 18083,
+                                "controller_http_port": 8090,
+                            },
+                            "owner": {
+                                "contribute_to_cluster_pool_size": {
+                                    "dram": 134217728,
+                                    "vram": {},
+                                }
+                            },
+                        }
+                    ],
+                }
+
+                out_path.write_text(yaml.safe_dump(cfg, sort_keys=False, allow_unicode=False), encoding="utf-8")
+                print(f"[gitops] wrote deployer bootstrap config: {out_path}")
+                PY
+            - python3 fluxon_test_stack/test_runner.py -c fluxon_test_stack/ci_test_list.yaml -w .

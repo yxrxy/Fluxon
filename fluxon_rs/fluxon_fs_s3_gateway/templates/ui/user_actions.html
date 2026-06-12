@@ -1,0 +1,15 @@
+<span class="userpill">
+  viewer:
+  <span class="mono">{{ viewer_username }}</span>
+</span>
+{% if show_as_user %}
+  <span class="userpill">
+    as:
+    <span class="mono">{{ actor_username }}</span>
+    <a class="link" href="{{ exit_view_as_href }}">exit</a>
+  </span>
+{% endif %}
+<a class="btn" href="{{ account_password_href }}">Change Password</a>
+{% if show_manage %}
+  <a class="btn" href="{{ admin_manage_href }}">Manage</a>
+{% endif %}

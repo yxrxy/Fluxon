@@ -1,0 +1,12 @@
+schema_version: 1
+base_config: common.yaml
+
+host:
+  os_id: ubuntu
+  version_id: "22.04"
+
+commands:
+  - name: cargo_metadata_smoke
+    cwd: fluxon_rs
+    shell: |
+      cargo metadata --format-version 1 --no-deps > /dev/null

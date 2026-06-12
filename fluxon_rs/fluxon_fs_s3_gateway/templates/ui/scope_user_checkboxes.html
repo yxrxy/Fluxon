@@ -1,0 +1,20 @@
+{% if show_empty_hint %}
+  <div class="users_hint">Create a user before binding scope_access.</div>
+{% else %}
+  <div class="check_grid">
+    {% for user in users %}
+      <label class="check_item">
+        <input
+          type="checkbox"
+          name="{{ field_name }}"
+          value="{{ user.username }}"
+          {% if user.checked %}checked{% endif %}
+        />
+        <span class="mono">{{ user.username }}</span>
+        {% if user.is_manager %}
+          <span class="check_meta">manager</span>
+        {% endif %}
+      </label>
+    {% endfor %}
+  </div>
+{% endif %}

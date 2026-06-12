@@ -1,0 +1,180 @@
+namespace: fluxon-test
+name_prefix: "__NAME_PREFIX__"
+
+cluster_nodes:
+  - hostname: "__NODE_ID__"
+    ip: "127.0.0.1"
+    hostworkdir: "__RUN_DIR__"
+
+shared_storage:
+  host: "__RUN_DIR__"
+  mount: "__RUN_MOUNT__"
+
+global_envs: {}
+
+service:
+  etcd:
+    image: "__ETCD_IMAGE__"
+    node_bind:
+      node: ["__NODE_ID__"]
+      hostport: false
+      hostnetwork: false
+      docker_networks: ["__NET_A__", "__NET_B__", "__NET_C__"]
+    entrypoint-mode: direct
+    entrypoint: |
+      /usr/local/bin/etcd \
+        --data-dir /etcd-data \
+        --name etcd0 \
+        --advertise-client-urls "http://0.0.0.0:2379" \
+        --listen-client-urls "http://0.0.0.0:2379" \
+        --listen-peer-urls "http://0.0.0.0:2380" \
+        --initial-advertise-peer-urls "http://0.0.0.0:2380" \
+        --initial-cluster "etcd0=http://0.0.0.0:2380" \
+        --initial-cluster-token "relay-docker-test" \
+        --initial-cluster-state "new" \
+        --auto-compaction-retention=1
+
+  master:
+    image: "__MASTER_IMAGE__"
+    node_bind:
+      node: ["__NODE_ID__"]
+      hostport: false
+      hostnetwork: false
+      docker_networks: ["__NET_A__", "__NET_B__", "__NET_C__"]
+    entrypoint: |
+      set -euo pipefail
+      python3 -m pip install --force-reinstall \
+        "__RUN_MOUNT__/fluxon_release/__PYTHON_WHEEL__" \
+        "__RUN_MOUNT__/fluxon_release/__PYO3_WHEEL__"
+      cd "__SOURCE_ROOT__/examples"
+      cat > all_config.yaml <<'YAML'
+      master:
+        etcd_endpoints:
+          - "__ETCD_CONTAINER_NAME__:2379"
+        cluster_name: "__CLUSTER_NAME__"
+        instance_key: "relay_master"
+        monitoring:
+          prometheus_base_url: "http://__ETCD_CONTAINER_NAME__:2379/v1/prometheus"
+          prom_remote_write_url:
+            - "http://__ETCD_CONTAINER_NAME__:2379/v1/prometheus/write"
+        port: __MASTER_PORT__
+        p2p_listen_port: __MASTER_PORT__
+        log_dir: "__RUNTIME_ROOT__/logs/master"
+      YAML
+      exec python3 -m fluxon_py.runtime.start_master -c all_config.yaml -w "__RUNTIME_ROOT__/work/master"
+
+  owner1:
+    image: "__OWNER_IMAGE__"
+    node_bind:
+      node: ["__NODE_ID__"]
+      hostport: false
+      hostnetwork: false
+      docker_networks: ["__NET_A__"]
+    entrypoint: |
+      set -euo pipefail
+      python3 -m pip install --force-reinstall \
+        "__RUN_MOUNT__/fluxon_release/__PYTHON_WHEEL__" \
+        "__RUN_MOUNT__/fluxon_release/__PYO3_WHEEL__"
+      cd "__SOURCE_ROOT__/examples"
+      cat > all_config.yaml <<'YAML'
+      kvclient:
+        instance_key: "owner1"
+        contribute_to_cluster_pool_size:
+          dram: 1073741824
+          vram: {}
+        fluxonkv_spec:
+          etcd_addresses:
+            - "__ETCD_CONTAINER_NAME__:2379"
+          cluster_name: "__CLUSTER_NAME__"
+          shared_memory_path: "__OWNER1_SHM__"
+          sub_cluster: "owner1"
+          p2p_listen_port: 31011
+      YAML
+      exec python3 -m fluxon_py.runtime.start_owner_kvclient -c all_config.yaml -w "__RUNTIME_ROOT__/work/owner1"
+
+  owner2:
+    image: "__OWNER_IMAGE__"
+    node_bind:
+      node: ["__NODE_ID__"]
+      hostport: false
+      hostnetwork: false
+      docker_networks: ["__NET_A__", "__NET_B__"]
+    entrypoint: |
+      set -euo pipefail
+      python3 -m pip install --force-reinstall \
+        "__RUN_MOUNT__/fluxon_release/__PYTHON_WHEEL__" \
+        "__RUN_MOUNT__/fluxon_release/__PYO3_WHEEL__"
+      cd "__SOURCE_ROOT__/examples"
+      cat > all_config.yaml <<'YAML'
+      kvclient:
+        instance_key: "owner2"
+        contribute_to_cluster_pool_size:
+          dram: 1073741824
+          vram: {}
+        fluxonkv_spec:
+          etcd_addresses:
+            - "__ETCD_CONTAINER_NAME__:2379"
+          cluster_name: "__CLUSTER_NAME__"
+          shared_memory_path: "__OWNER2_SHM__"
+          sub_cluster: "owner2"
+          p2p_listen_port: 31012
+      YAML
+      exec python3 -m fluxon_py.runtime.start_owner_kvclient -c all_config.yaml -w "__RUNTIME_ROOT__/work/owner2"
+
+  owner3:
+    image: "__OWNER_IMAGE__"
+    node_bind:
+      node: ["__NODE_ID__"]
+      hostport: false
+      hostnetwork: false
+      docker_networks: ["__NET_B__", "__NET_C__"]
+    entrypoint: |
+      set -euo pipefail
+      python3 -m pip install --force-reinstall \
+        "__RUN_MOUNT__/fluxon_release/__PYTHON_WHEEL__" \
+        "__RUN_MOUNT__/fluxon_release/__PYO3_WHEEL__"
+      cd "__SOURCE_ROOT__/examples"
+      cat > all_config.yaml <<'YAML'
+      kvclient:
+        instance_key: "owner3"
+        contribute_to_cluster_pool_size:
+          dram: 1073741824
+          vram: {}
+        fluxonkv_spec:
+          etcd_addresses:
+            - "__ETCD_CONTAINER_NAME__:2379"
+          cluster_name: "__CLUSTER_NAME__"
+          shared_memory_path: "__OWNER3_SHM__"
+          sub_cluster: "owner3"
+          p2p_listen_port: 31013
+      YAML
+      exec python3 -m fluxon_py.runtime.start_owner_kvclient -c all_config.yaml -w "__RUNTIME_ROOT__/work/owner3"
+
+  owner4:
+    image: "__OWNER_IMAGE__"
+    node_bind:
+      node: ["__NODE_ID__"]
+      hostport: false
+      hostnetwork: false
+      docker_networks: ["__NET_C__"]
+    entrypoint: |
+      set -euo pipefail
+      python3 -m pip install --force-reinstall \
+        "__RUN_MOUNT__/fluxon_release/__PYTHON_WHEEL__" \
+        "__RUN_MOUNT__/fluxon_release/__PYO3_WHEEL__"
+      cd "__SOURCE_ROOT__/examples"
+      cat > all_config.yaml <<'YAML'
+      kvclient:
+        instance_key: "owner4"
+        contribute_to_cluster_pool_size:
+          dram: 1073741824
+          vram: {}
+        fluxonkv_spec:
+          etcd_addresses:
+            - "__ETCD_CONTAINER_NAME__:2379"
+          cluster_name: "__CLUSTER_NAME__"
+          shared_memory_path: "__OWNER4_SHM__"
+          sub_cluster: "owner4"
+          p2p_listen_port: 31014
+      YAML
+      exec python3 -m fluxon_py.runtime.start_owner_kvclient -c all_config.yaml -w "__RUNTIME_ROOT__/work/owner4"

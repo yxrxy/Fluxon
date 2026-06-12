@@ -1,0 +1,58 @@
+version: 3
+title: cluster_example init
+
+resources: []
+
+module_tags:
+  ClusterManager: [owner]
+  ClusterExample: [owner]
+
+steps:
+  - id: ClusterManager.step.0.construct
+    module: ClusterManager
+    mode: Blocking
+    deps: []
+    doc: |
+      - Construct: ClusterManager (no PostView)
+      - Provide: etcd connection config + local state
+    exec:
+      kind: Construct
+      call: "ClusterManager::construct"
+      arg_field: "cluster_manager_arg"
+    best_effort: null
+
+  - id: ClusterExample.step.0.construct
+    module: ClusterExample
+    mode: Blocking
+    deps: []
+    doc: |
+      - Construct: ClusterExample (no PostView)
+      - Provide: background tasks config (event/watch)
+    exec:
+      kind: Construct
+      call: "ClusterExample::construct"
+      arg_field: "cluster_example_arg"
+    best_effort: null
+
+  - id: ClusterManager.step.1.init2
+    module: ClusterManager
+    mode: Blocking
+    deps: []
+    doc: |
+      - Start: cluster member watch
+    exec:
+      kind: Call
+      call: "ClusterManager::init2_for_init_dag"
+    best_effort: null
+
+  - id: ClusterExample.step.1.init2
+    module: ClusterExample
+    mode: Blocking
+    deps:
+      - ClusterManager.step.1.init2
+    doc: |
+      - Start: cluster event log loops
+    exec:
+      kind: Call
+      call: "ClusterExample::init2_for_example"
+    best_effort: null

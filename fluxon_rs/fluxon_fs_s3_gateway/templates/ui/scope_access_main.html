@@ -1,0 +1,127 @@
+{% for warning in warnings %}
+  <div class="warn">{{ warning }}</div>
+{% endfor %}
+
+{% for success in success_messages %}
+  <div class="row">
+    <span class="pill">{{ success }}</span>
+  </div>
+{% endfor %}
+
+{% if show_content %}
+  <div class="users_page">
+    <div class="users_layout">
+      <section class="users_panel">
+        <div class="users_panel_head">
+          <div>
+            <div class="users_panel_eyebrow">Scope Setup</div>
+            <h2 class="users_panel_title">Create Scope Access</h2>
+            <div class="users_panel_desc">
+              Define a bucket + prefix scope and bind it to one or more users. The UI only exposes read
+              or read_write modes; raw permission YAML stays internal.
+            </div>
+          </div>
+        </div>
+        <div class="users_panel_body">
+          <form method="post" class="users_form" action="{{ create_action }}">
+            <div class="users_form_grid">
+              <div class="field">
+                <label>Bucket</label>
+                <select name="bucket" required>
+                  {% for bucket in bucket_options %}
+                    <option value="{{ bucket.value }}">{{ bucket.label }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="field">
+                <label>Mode</label>
+                <select name="mode" required>
+                  {% for mode in mode_options %}
+                    <option value="{{ mode.value }}">{{ mode.label }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="field full">
+                <label>Prefix</label>
+                <input type="text" name="prefix" placeholder="e.g. docs/" />
+              </div>
+              <div class="field full">
+                <label>Bound Users</label>
+                {{ create_bound_users_html|safe }}
+              </div>
+            </div>
+            <div class="users_hint">
+              Prefix must be empty or end with '/'. Users with read scope only see the matching subtree
+              in the browser UI.
+            </div>
+            <div class="users_form_actions">
+              <button class="btn primary" type="submit">Create Scope Access</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <section class="users_panel">
+        <div class="users_panel_head">
+          <div>
+            <div class="users_panel_eyebrow">Bindings</div>
+            <h2 class="users_panel_title">Existing Scope Access</h2>
+            <div class="users_panel_desc">
+              Each scope_access is keyed by export_name + prefix + mode. Update bound users in place or
+              delete the scope and recreate it with a different shape.
+            </div>
+          </div>
+          <div class="users_stat">{{ scope_count_label }}</div>
+        </div>
+        <div class="users_panel_body">
+          {% if show_empty_scopes %}
+            <div class="empty_state">No scope_access configured.</div>
+          {% else %}
+            <div class="users_list">
+              {% for scope in scopes %}
+                <article class="user_card" data-filter-row data-filter-text="{{ scope.filter_text }}">
+                  <div class="user_card_head">
+                    <div class="user_card_identity">
+                      <div class="user_badges">
+                        <span class="pill">
+                          bucket:
+                          <strong class="mono">{{ scope.export_name }}</strong>
+                        </span>
+                        <span class="pill">
+                          prefix:
+                          <span class="mono">{{ scope.prefix_display }}</span>
+                        </span>
+                        <span class="rule_badge">{{ scope.mode_title }}</span>
+                      </div>
+                    </div>
+                    <form method="post" class="user_action_form" action="{{ scope.delete_action }}">
+                      <input type="hidden" name="bucket" value="{{ scope.export_name }}" />
+                      <input type="hidden" name="prefix" value="{{ scope.prefix_value }}" />
+                      <input type="hidden" name="mode" value="{{ scope.mode_value }}" />
+                      <button class="btn danger" type="submit" onclick="return confirm('Delete this scope_access?');">
+                        Delete
+                      </button>
+                    </form>
+                  </div>
+
+                  <div class="user_reset_shell">
+                    <div class="user_reset_label">Bound Users</div>
+                    <form method="post" class="users_form" action="{{ scope.update_users_action }}">
+                      <input type="hidden" name="bucket" value="{{ scope.export_name }}" />
+                      <input type="hidden" name="prefix" value="{{ scope.prefix_value }}" />
+                      <input type="hidden" name="mode" value="{{ scope.mode_value }}" />
+                      {{ scope.bound_users_html|safe }}
+                      <div class="users_form_actions">
+                        <button class="btn" type="submit">Save Bindings</button>
+                      </div>
+                    </form>
+                  </div>
+                </article>
+              {% endfor %}
+            </div>
+          {% endif %}
+        </div>
+      </section>
+    </div>
+  </div>
+{% endif %}

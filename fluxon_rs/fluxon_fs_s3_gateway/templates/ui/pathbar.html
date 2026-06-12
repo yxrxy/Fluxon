@@ -1,0 +1,26 @@
+<div class="pathbar">
+  {% if show_subject %}
+    <span class="pill">
+      {{ subject_label }}:
+      <strong class="mono">{{ subject_username }}</strong>
+    </span>
+  {% endif %}
+  {% if show_as %}
+    <span class="pill">
+      as:
+      <strong class="mono">{{ actor_username }}</strong>
+    </span>
+  {% endif %}
+  {% if show_cluster %}
+    <span class="pill">
+      cluster:
+      <span class="mono">{{ cluster_name }}</span>
+    </span>
+  {% endif %}
+  {% if show_access_db %}
+    <span class="pill">
+      access_db:
+      <span class="mono">{{ access_db_path }}</span>
+    </span>
+  {% endif %}
+</div>

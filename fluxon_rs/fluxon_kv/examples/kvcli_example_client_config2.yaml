@@ -1,0 +1,15 @@
+# Example client configuration for FluxonKV cache backend
+instance_key: "client_node_002"
+
+contribute_to_cluster_pool_size:
+  dram: 335544320  # 320MB in bytes
+  vram: {}
+
+fluxonkv_spec:
+  etcd_addresses:
+  - "127.0.0.1:2379"
+  cluster_name: "cluster_001"
+  shared_memory_path: "/tmp/kvcache_shared_memory/client_node_002"
+
+# Optional: Additional configurations can be added here
+# custom_field: "value"

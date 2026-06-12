@@ -1,0 +1,1626 @@
+{% extends "layout.html" %}
+
+{% block title %}Fluxon Topology{% endblock %}
+
+{% block head_extra %}
+  <style>
+  /* Topology canvas (dark, draggable nodes). Kept local to this page. */
+  .topo_wrap { position: relative; border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden; background: #0b1121; }
+  .topo_canvas { position: relative; width: 100%; height: 860px; }
+  .topo_world { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform-origin: 0 0; will-change: transform; }
+  .topo_canvas svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; overflow: visible; }
+
+  .topo_controls {
+    position: absolute; top: 14px; left: 14px; z-index: 10;
+    background: rgba(31, 41, 55, 0.8);
+    padding: 12px 14px;
+    border-radius: 8px;
+    border: 1px solid #374151;
+    backdrop-filter: blur(5px);
+    color: #e5e7eb;
+  }
+  .topo_controls h2 { margin: 0 0 4px 0; font-size: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+  .topo_controls .muted { color: #9ca3af; }
+  .topo_legend { margin-top: 8px; font-size: 12px; }
+  .topo_dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: middle; }
+
+  .topo_node {
+    position: absolute;
+    z-index: 2;
+    background: #1f2937;
+    border: 1px solid #4b5563;
+    border-radius: 8px;
+    padding: 10px 12px;
+    width: 220px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+    transition: transform 0.1s;
+    cursor: grab;
+    color: #e5e7eb;
+  }
+  .topo_node:active { cursor: grabbing; transform: scale(1.02); }
+  .topo_node.topo_selected {
+    border-color: #93c5fd;
+    box-shadow: 0 0 0 2px rgba(147, 197, 253, 0.35), 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+  }
+  .topo_node_title { font-size: 13px; font-weight: 700; margin-bottom: 4px; display: flex; justify-content: space-between; gap: 8px; }
+  .topo_node_meta { font-size: 10px; color: #9ca3af; word-break: break-word; white-space: pre-wrap; }
+  .topo_section { margin-top: 8px; border-top: 1px solid rgba(75, 85, 99, 0.45); padding-top: 6px; }
+  .topo_section_head { display: flex; justify-content: space-between; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+  .topo_section_title { font-size: 10px; color: #cbd5e1; letter-spacing: 0.02em; text-transform: uppercase; }
+  .topo_section_toggle { font-size: 10px; color: #93c5fd; }
+  .topo_section_body { margin-top: 6px; }
+  .topo_section[data-collapsed="1"] .topo_section_body { display: none; }
+  .topo_section[data-collapsed="1"] .topo_section_toggle::before { content: '[+]'; }
+  .topo_section[data-collapsed="0"] .topo_section_toggle::before { content: '[-]'; }
+
+  .topo_select_box {
+    position: absolute;
+    z-index: 3;
+    border: 1px dashed #93c5fd;
+    background: rgba(147, 197, 253, 0.08);
+    pointer-events: none;
+    display: none;
+  }
+
+	  .topo_node[data-kind="sub_cluster"] .topo_node_title .topo_dot { background: #60a5fa; }
+	  .topo_node[data-kind="machine"] .topo_node_title .topo_dot { background: #34d399; }
+	  .topo_node[data-kind="fs_mountpoint"] .topo_node_title .topo_dot { background: #a3a3a3; }
+	  .topo_node[data-kind="fs_shm"] .topo_node_title .topo_dot { background: #38bdf8; }
+	  .topo_node[data-kind="fs_export"] .topo_node_title .topo_dot { background: #f97316; }
+	  .topo_node[data-kind="fs_tmp"] .topo_node_title .topo_dot { background: #f472b6; }
+	  .topo_node[data-kind="owner"] .topo_node_title .topo_dot { background: #a78bfa; }
+	  .topo_node[data-kind="external"] .topo_node_title .topo_dot { background: #fbbf24; }
+  .topo_node[data-kind="mq_producer"] .topo_node_title .topo_dot { background: #22d3ee; }
+  .topo_node[data-kind="mq_consumer"] .topo_node_title .topo_dot { background: #fb7185; }
+  .topo_node[data-kind="orphan_machine"] .topo_node_title .topo_dot { background: #9ca3af; }
+  .topo_node[data-kind="orphan_external"] .topo_node_title .topo_dot { background: #9ca3af; }
+
+  .topo_bar_row { margin-top: 6px; }
+  .topo_bar_label { font-size: 10px; color: #9ca3af; display: flex; justify-content: space-between; gap: 10px; }
+  .topo_bar { height: 8px; border-radius: 999px; background: rgba(55, 65, 81, 0.55); position: relative; overflow: hidden; margin-top: 4px; }
+  .topo_bar_total { height: 100%; position: absolute; left: 0; top: 0; background: rgba(148, 163, 184, 0.40); }
+  .topo_bar_enabled { height: 100%; position: absolute; left: 0; top: 0; background: rgba(100, 116, 139, 0.78); }
+  .topo_bar_cur { height: 100%; position: absolute; left: 0; top: 0; background: rgba(16, 185, 129, 0.80); }
+  .topo_bar_marker {
+    position: absolute;
+    top: -2px;
+    bottom: -2px;
+    width: 8px;
+    transform: translateX(-50%);
+    z-index: 4;
+    cursor: help;
+  }
+  .topo_bar_marker::after {
+    content: '';
+    position: absolute;
+    left: 3px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    border-radius: 999px;
+    background: rgba(239, 68, 68, 0.96);
+    box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.35);
+  }
+
+  .topo_node[data-kind="orphan_machine"] { border-color: #6b7280; }
+  .topo_node[data-kind="orphan_external"] { border-color: #6b7280; }
+
+  .topo_edge_label {
+    position: absolute;
+    z-index: 1;
+    background: rgba(17, 24, 39, 0.9);
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    border: 1px solid #374151;
+    transform: translate(-50%, -50%);
+    white-space: nowrap;
+    pointer-events: none;
+    color: #e5e7eb;
+  }
+
+  @keyframes topoFlowAnimation {
+    from { stroke-dashoffset: 20; }
+    to { stroke-dashoffset: 0; }
+  }
+</style>
+{% endblock %}
+
+{% block body %}
+<div id="app" data-topology-layout-key="{{ header.cluster_name_encoded }}">
+  <div class="top">
+    <h1>Topology <span class="mono">{{ header.cluster_name }}</span></h1>
+    <div class="card">
+      <div class="muted">version: <span class="mono">{{ build.version }}</span></div>
+      <div class="muted">commit: <span class="mono">{{ build.commit }}</span></div>
+      <div class="muted">source-sha256: <span class="mono">{{ build.source_sha256 }}</span></div>
+    </div>
+      <div class="card">
+      <div class="muted">Hierarchy: <span class="mono">sub_cluster</span> -&gt; <span class="mono">machine</span> -&gt; <span class="mono">owner</span> -&gt; <span class="mono">external</span></div>
+      <div class="muted">machine match: <span class="mono">detected rdma port set</span> | <span class="mono">no-rdma owner unique</span></div>
+      <div class="muted">rdma display: <span class="mono">machine=inventory+all/enabled/current+pcie-limit</span> | <span class="mono">owner=in-use nic/ports</span></div>
+      <div class="muted">Auto refresh:
+        <span id="topo_auto_refresh_live" class="mono">in <span id="refresh-in" class="mono">{{ refresh_secs }}</span>s</span>
+        <span id="topo_auto_refresh_manual" class="mono" style="display:none">disabled (manual)</span>
+      </div>
+      <div class="row formrow">
+        <span class="muted">Time:</span>
+        <select id="topo_time_mode">
+          <option value="live">Live (auto refresh)</option>
+          <option value="manual">Manual (fixed time)</option>
+        </select>
+        <select id="topo_time_lookback"></select>
+        <button id="topo_time_apply_lookback" type="button">Apply</button>
+      </div>
+      <div class="row formrow">
+        <span class="muted mono">at(s)</span>
+        <input id="topo_time_at_input" class="mono" placeholder="unix seconds" size="18" />
+        <button id="topo_time_apply_at" type="button">Apply</button>
+        <button id="topo_time_go_live" type="button">Live</button>
+      </div>
+      <div class="muted tiny mono" id="topo_time_hint"></div>
+      <div class="bad tiny mono" id="topo_time_err"></div>
+      <div class="row">
+        <a class="muted" href="/">Landing</a>
+        <span class="muted">|</span>
+        <a class="muted" href="/view?cluster_name={{ header.cluster_name_encoded }}&member_kind=kv">KV View</a>
+      </div>
+    </div>
+  </div>
+
+  {% if warnings.len() > 0 %}
+    <div class="warn">
+      <div><b>Warnings</b></div>
+      {% for w in warnings %}
+        <div class="mono">- {{ w }}</div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  {% if topology.is_none() %}
+    <div class="card row"><div class="muted">N/A</div></div>
+  {% else %}
+    <div class="card row">
+      <div class="muted">nodes: <span class="mono">{{ topology.as_ref().unwrap().node_count }}</span> | edges: <span class="mono">{{ topology.as_ref().unwrap().edge_count }}</span></div>
+    </div>
+    <div class="topo_wrap" id="topo_wrap">
+		      <div class="topo_controls">
+		        <h2>Fluxon Topology</h2>
+		        <div class="muted tiny">Box-select on empty space. Hold Ctrl to pan. Ctrl+wheel to zoom.</div>
+		        <div class="topo_legend">
+		          <div><span class="topo_dot" style="background:#60a5fa"></span>sub_cluster</div>
+	          <div><span class="topo_dot" style="background:#34d399"></span>machine</div>
+	          <div><span class="topo_dot" style="background:#a3a3a3"></span>fs_mountpoint</div>
+	          <div><span class="topo_dot" style="background:#f97316"></span>fs_export</div>
+	          <div><span class="topo_dot" style="background:#38bdf8"></span>fs_shm</div>
+	          <div><span class="topo_dot" style="background:#f472b6"></span>fs_tmp</div>
+	          <div><span class="topo_dot" style="background:#a78bfa"></span>owner</div>
+	          <div><span class="topo_dot" style="background:#fbbf24"></span>external</div>
+          <div><span class="topo_dot" style="background:#22d3ee"></span>mq_producer</div>
+          <div><span class="topo_dot" style="background:#fb7185"></span>mq_consumer</div>
+          <div><span class="topo_dot" style="background:#9ca3af"></span>orphan (missing owner)</div>
+        </div>
+	      </div>
+	      <div class="topo_canvas" id="topology_canvas">
+	        <div class="topo_world" id="topology_world">
+	          <svg id="topology_svg" xmlns="http://www.w3.org/2000/svg"></svg>
+	        </div>
+	      </div>
+	    </div>
+	    <script id="topology_data" type="application/json">{{ topology.as_ref().unwrap().json_escaped|safe }}</script>
+	  {% endif %}
+</div>
+
+<script>
+(function () {
+  const refreshSecs = {{ refresh_secs }};
+  const url0 = new URL(window.location.href);
+  const atRaw0 = (url0.searchParams.get('at') || '').trim();
+  const hasAt0 = atRaw0.length > 0;
+
+	  const LAYOUT_STORAGE_KEY_PREFIX = 'fluxon_topology_layout_v1:';
+	  const VIEWPORT_LAYOUT_KEY = '__fluxon_topology_viewport_v1';
+
+	  function setText(id, text) {
+	    const el = document.getElementById(id);
+	    if (!el) return;
+	    el.textContent = String(text);
+  }
+
+  function clearText(id) {
+    setText(id, '');
+  }
+
+  function parseFiniteF64(v) {
+    const t = (v || '').toString().trim();
+    if (t === '') return { ok: false, n: 0, err: 'empty' };
+    const n = Number(t);
+    if (!Number.isFinite(n)) return { ok: false, n: 0, err: 'not a finite number: ' + t };
+    return { ok: true, n, err: '' };
+  }
+
+  function unixSToLocalString(atS) {
+    const ms = Math.trunc(atS * 1000);
+    if (!Number.isFinite(ms)) return '';
+    try {
+      return new Date(ms).toLocaleString();
+    } catch (_e) {
+      return '';
+    }
+  }
+
+  function formatLookbackLabel(seconds) {
+    const s = Math.trunc(seconds);
+    if (s < 60) return s + 's';
+    if (s < 3600) return Math.trunc(s / 60) + 'm';
+    if (s < 86400) return Math.trunc(s / 3600) + 'h';
+    return Math.trunc(s / 86400) + 'd';
+  }
+
+  function updateAutoRefreshStatus() {
+    const liveEl = document.getElementById('topo_auto_refresh_live');
+    const manualEl = document.getElementById('topo_auto_refresh_manual');
+    if (!liveEl || !manualEl) return;
+    if (!hasAt0) {
+      liveEl.style.display = '';
+      manualEl.style.display = 'none';
+      return;
+    }
+    liveEl.style.display = 'none';
+    manualEl.style.display = '';
+  }
+
+  function wireTimeControls() {
+    const modeSel = document.getElementById('topo_time_mode');
+    const lookbackSel = document.getElementById('topo_time_lookback');
+    const applyLookbackBtn = document.getElementById('topo_time_apply_lookback');
+    const atInput = document.getElementById('topo_time_at_input');
+    const applyAtBtn = document.getElementById('topo_time_apply_at');
+    const liveBtn = document.getElementById('topo_time_go_live');
+    if (!modeSel || !lookbackSel || !applyLookbackBtn || !atInput || !applyAtBtn || !liveBtn) {
+      return;
+    }
+    if (modeSel.getAttribute('data-wired') === '1') {
+      return;
+    }
+    modeSel.setAttribute('data-wired', '1');
+
+    // Exponential-ish lookback options (near -> far).
+    const LOOKBACK_S = [
+      10, 20, 40, 80, 160, 320, 640, 1280, 2560, 5120, 10240,
+      21600, 43200, 86400, 172800, 604800, 2592000,
+    ];
+    const desiredLookback = (lookbackSel.value || '').toString();
+    lookbackSel.innerHTML = '';
+    {
+      const opt0 = document.createElement('option');
+      opt0.value = '';
+      opt0.textContent = 'Lookback...';
+      lookbackSel.appendChild(opt0);
+      for (const s of LOOKBACK_S) {
+        const opt = document.createElement('option');
+        opt.value = String(s);
+        opt.textContent = formatLookbackLabel(s);
+        lookbackSel.appendChild(opt);
+      }
+    }
+    if (desiredLookback !== '') {
+      lookbackSel.value = desiredLookback;
+    }
+
+    updateAutoRefreshStatus();
+    clearText('topo_time_err');
+
+    const existingMode = (modeSel.value || '').toString().trim();
+    const existingAt = (atInput.value || '').toString().trim();
+    if (existingMode !== 'live' && existingMode !== 'manual') {
+      modeSel.value = hasAt0 ? 'manual' : 'live';
+    }
+    if (existingAt === '' && hasAt0) {
+      atInput.value = atRaw0;
+    }
+    if (hasAt0) {
+      const pv = unixSToLocalString(Number(atRaw0));
+      setText('topo_time_hint', 'manual at=' + atRaw0 + ' (' + pv + ')');
+    } else {
+      setText('topo_time_hint', 'live mode (auto refresh enabled)');
+    }
+
+    function navWithUrl(u) {
+      window.location.href = u.toString();
+    }
+
+    liveBtn.addEventListener('click', () => {
+      const u = new URL(window.location.href);
+      u.searchParams.delete('at');
+      navWithUrl(u);
+    });
+
+    applyAtBtn.addEventListener('click', () => {
+      clearText('topo_time_err');
+      const parsed = parseFiniteF64(atInput.value);
+      if (!parsed.ok) {
+        setText('topo_time_err', 'invalid at: ' + parsed.err);
+        return;
+      }
+      if (parsed.n <= 0) {
+        setText('topo_time_err', 'invalid at: must be unix seconds > 0');
+        return;
+      }
+      const nowS = Date.now() / 1000.0;
+      if (parsed.n > nowS + 1.0) {
+        setText('topo_time_err', 'invalid at: must be <= now');
+        return;
+      }
+      const u = new URL(window.location.href);
+      u.searchParams.set('at', String(parsed.n));
+      navWithUrl(u);
+    });
+
+    applyLookbackBtn.addEventListener('click', () => {
+      clearText('topo_time_err');
+      const lbRaw = (lookbackSel.value || '').trim();
+      if (lbRaw === '') {
+        setText('topo_time_err', 'missing lookback selection');
+        return;
+      }
+      const lb = Number(lbRaw);
+      if (!Number.isFinite(lb) || lb <= 0) {
+        setText('topo_time_err', 'invalid lookback seconds: ' + lbRaw);
+        return;
+      }
+      const nowS = Date.now() / 1000.0;
+      const atS = Math.floor(nowS - lb);
+      if (!Number.isFinite(atS) || atS <= 0) {
+        setText('topo_time_err', 'computed at is invalid');
+        return;
+      }
+      const u = new URL(window.location.href);
+      u.searchParams.set('at', String(atS));
+      navWithUrl(u);
+    });
+
+    modeSel.addEventListener('change', () => {
+      clearText('topo_time_err');
+      const v = (modeSel.value || '').trim();
+      if (v === 'live') {
+        setText('topo_time_hint', 'live mode (click Live button or remove at param)');
+        return;
+      }
+      if (v === 'manual') {
+        setText('topo_time_hint', 'manual mode (apply lookback or set at)');
+        return;
+      }
+      setText('topo_time_err', 'invalid time mode: ' + v);
+    });
+  }
+
+  function layoutStorageKey() {
+    const app = document.getElementById('app');
+    if (!app) {
+      console.warn('topology: missing #app; layout persistence disabled');
+      return null;
+    }
+    const k = app.getAttribute('data-topology-layout-key');
+    if (!k) {
+      console.warn('topology: missing data-topology-layout-key; layout persistence disabled');
+      return null;
+    }
+    return LAYOUT_STORAGE_KEY_PREFIX + k;
+  }
+
+  function loadLayout() {
+    const key = layoutStorageKey();
+    if (!key) return null;
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return {};
+      return parsed;
+    } catch (e) {
+      console.warn('topology: load layout failed', e);
+      return {};
+    }
+  }
+
+  function saveLayout(layout) {
+    const key = layoutStorageKey();
+    if (!key) return;
+    try {
+      window.localStorage.setItem(key, JSON.stringify(layout));
+    } catch (e) {
+      console.warn('topology: save layout failed', e);
+    }
+  }
+
+  let topoResizeWired = false;
+  let topoDocWired = false;
+  let topoActive = null;
+
+	  function initTopology() {
+	    const dataEl = document.getElementById('topology_data');
+	    const canvas = document.getElementById('topology_canvas');
+	    const world = document.getElementById('topology_world');
+	    const svg = document.getElementById('topology_svg');
+	    if (!dataEl || !canvas || !world || !svg) {
+	      topoActive = null;
+	      return;
+	    }
+
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width < 50 || rect.height < 50) {
+      topoActive = null;
+      return;
+    }
+
+    let wire = null;
+    try {
+      wire = JSON.parse(dataEl.textContent || '');
+    } catch (e) {
+      console.warn('topology: parse json failed', e);
+      topoActive = null;
+      return;
+    }
+    if (!wire || !Array.isArray(wire.nodes) || !Array.isArray(wire.links)) {
+      console.warn('topology: invalid payload');
+      topoActive = null;
+      return;
+    }
+
+	    world.querySelectorAll('.topo_node').forEach((el) => el.remove());
+	    world.querySelectorAll('.topo_edge_label').forEach((el) => el.remove());
+		    svg.innerHTML = '';
+
+	    const NODE_W = 220;
+	    const COLS = ['sub_cluster', 'machine', 'fs_path', 'owner', 'external', 'mq_producer', 'mq_consumer'];
+	    const colIdx = new Map(COLS.map((k, i) => [k, i]));
+
+    const marginX = 28;
+    const usableW = Math.max(1, rect.width - marginX * 2 - NODE_W);
+    const colGap = (COLS.length <= 1) ? 0 : (usableW / (COLS.length - 1));
+    const xByKind = {};
+	    for (const k of COLS) {
+	      xByKind[k] = marginX + (colIdx.get(k) || 0) * colGap;
+	    }
+		    xByKind['orphan_machine'] = xByKind['machine'];
+		    xByKind['orphan_external'] = xByKind['external'];
+		    xByKind['fs_mountpoint'] = xByKind['fs_path'];
+		    xByKind['fs_shm'] = xByKind['fs_path'];
+		    xByKind['fs_export'] = xByKind['fs_path'];
+		    xByKind['fs_tmp'] = xByKind['fs_path'];
+
+    // Prometheus query contract (Topology history max):
+    // - We display `cur/max` on parent nodes.
+    // - `max` is computed server-side by querying the target Mbps expression over:
+    //   - window: last 30d
+    //   - step: 30s
+    //   then taking the maximum value client-side (to avoid TSDB-specific PromQL subquery gaps).
+    // - `cur` is computed client-side from the current topology links.
+    function fmtMbps(mbps) {
+      if (!Number.isFinite(mbps) || mbps <= 0) return '0';
+      if (mbps >= 100) return mbps.toFixed(0);
+      if (mbps >= 10) return mbps.toFixed(1);
+      return mbps.toFixed(2);
+    }
+
+    function fmtLinkRateAuto(mbps) {
+      if (!Number.isFinite(mbps) || mbps <= 0) return '0 Mbps';
+      if (mbps >= 1000000) {
+        const tbps = mbps / 1000000;
+        return (tbps >= 10 ? tbps.toFixed(0) : tbps.toFixed(2)) + ' Tbps';
+      }
+      if (mbps >= 1000) {
+        const gbps = mbps / 1000;
+        return (gbps >= 100 ? gbps.toFixed(0) : (gbps >= 10 ? gbps.toFixed(1) : gbps.toFixed(2))) + ' Gbps';
+      }
+      return fmtMbps(mbps) + ' Mbps';
+    }
+
+    function fmtBytes(b) {
+      if (!Number.isFinite(b) || b <= 0) return '0B';
+      const kb = 1024;
+      const mb = kb * 1024;
+      const gb = mb * 1024;
+      if (b >= gb) return (b / gb).toFixed(2) + 'GiB';
+      if (b >= mb) return (b / mb).toFixed(2) + 'MiB';
+      if (b >= kb) return (b / kb).toFixed(2) + 'KiB';
+      return b.toFixed(0) + 'B';
+    }
+
+    function fmtPercentWide(p) {
+      if (!Number.isFinite(p) || p < 0) return 'N/A';
+      if (p >= 100) return p.toFixed(0) + '%';
+      if (p >= 10) return p.toFixed(1) + '%';
+      return p.toFixed(2) + '%';
+    }
+
+    const nodes = wire.nodes.map((n) => ({
+      id: String(n.id || ''),
+      kind: String(n.kind || ''),
+      label: String(n.label || ''),
+      meta: (n.meta === null || n.meta === undefined) ? '' : String(n.meta),
+      detail: (n.detail === null || n.detail === undefined) ? '' : String(n.detail),
+      txMax: (n.tx_mbps_max === null || n.tx_mbps_max === undefined) ? null : Number(n.tx_mbps_max),
+      rxMax: (n.rx_mbps_max === null || n.rx_mbps_max === undefined) ? null : Number(n.rx_mbps_max),
+      fsUsed: (n.fs_used_bytes === null || n.fs_used_bytes === undefined) ? null : Number(n.fs_used_bytes),
+      fsTotal: (n.fs_total_bytes === null || n.fs_total_bytes === undefined) ? null : Number(n.fs_total_bytes),
+      fsReadRps: (n.fs_read_rps === null || n.fs_read_rps === undefined) ? null : Number(n.fs_read_rps),
+      fsWriteRps: (n.fs_write_rps === null || n.fs_write_rps === undefined) ? null : Number(n.fs_write_rps),
+      procCpu: (n.process_cpu_usage_percent === null || n.process_cpu_usage_percent === undefined) ? null : Number(n.process_cpu_usage_percent),
+      procRss: (n.process_resident_memory_bytes === null || n.process_resident_memory_bytes === undefined) ? null : Number(n.process_resident_memory_bytes),
+      containerMemUsed: (n.container_memory_usage_bytes === null || n.container_memory_usage_bytes === undefined) ? null : Number(n.container_memory_usage_bytes),
+      containerMemLimit: (n.container_memory_limit_bytes === null || n.container_memory_limit_bytes === undefined) ? null : Number(n.container_memory_limit_bytes),
+      machineRssSum: (n.machine_process_resident_memory_sum_bytes === null || n.machine_process_resident_memory_sum_bytes === undefined) ? null : Number(n.machine_process_resident_memory_sum_bytes),
+      machineCpuUsedCores: (n.machine_cpu_used_cores === null || n.machine_cpu_used_cores === undefined) ? null : Number(n.machine_cpu_used_cores),
+      machineCpuTotalCores: (n.machine_cpu_total_cores === null || n.machine_cpu_total_cores === undefined) ? null : Number(n.machine_cpu_total_cores),
+      machineMemUsed: (n.machine_memory_used_bytes === null || n.machine_memory_used_bytes === undefined) ? null : Number(n.machine_memory_used_bytes),
+      machineMemTotal: (n.machine_memory_total_bytes === null || n.machine_memory_total_bytes === undefined) ? null : Number(n.machine_memory_total_bytes),
+      machineContainerMemUsed: (n.machine_container_memory_usage_bytes === null || n.machine_container_memory_usage_bytes === undefined) ? null : Number(n.machine_container_memory_usage_bytes),
+      machineContainerMemLimit: (n.machine_container_memory_limit_bytes === null || n.machine_container_memory_limit_bytes === undefined) ? null : Number(n.machine_container_memory_limit_bytes),
+      machineRdmaTxCur: (n.machine_rdma_tx_mbps_cur === null || n.machine_rdma_tx_mbps_cur === undefined) ? null : Number(n.machine_rdma_tx_mbps_cur),
+      machineRdmaTxMax: (n.machine_rdma_tx_mbps_max === null || n.machine_rdma_tx_mbps_max === undefined) ? null : Number(n.machine_rdma_tx_mbps_max),
+      machineRdmaEnabledMax: (n.machine_rdma_enabled_mbps_max === null || n.machine_rdma_enabled_mbps_max === undefined) ? null : Number(n.machine_rdma_enabled_mbps_max),
+      machineRdmaPcieMax: (n.machine_rdma_pcie_mbps_max === null || n.machine_rdma_pcie_mbps_max === undefined) ? null : Number(n.machine_rdma_pcie_mbps_max),
+      machineRdmaRxCur: (n.machine_rdma_rx_mbps_cur === null || n.machine_rdma_rx_mbps_cur === undefined) ? null : Number(n.machine_rdma_rx_mbps_cur),
+      machineRdmaRxMax: (n.machine_rdma_rx_mbps_max === null || n.machine_rdma_rx_mbps_max === undefined) ? null : Number(n.machine_rdma_rx_mbps_max),
+      x: 0,
+      y: 0,
+    }));
+	    const byId = new Map(nodes.map((n) => [n.id, n]));
+
+	    // Global maxima for absolute-scale two-stage bars.
+	    let maxMachineMemTotal = 0;
+	    let maxMachineContainerMemLimit = 0;
+	    let maxMachineCpuTotal = 0;
+	    let maxFsTotal = 0;
+	    let maxTxMax = 0;
+	    let maxRxMax = 0;
+	    for (const n of nodes) {
+	      if (n.machineMemTotal !== null && Number.isFinite(n.machineMemTotal) && n.machineMemTotal > maxMachineMemTotal) {
+	        maxMachineMemTotal = n.machineMemTotal;
+	      }
+	      if (n.machineContainerMemLimit !== null && Number.isFinite(n.machineContainerMemLimit) && n.machineContainerMemLimit > maxMachineContainerMemLimit) {
+	        maxMachineContainerMemLimit = n.machineContainerMemLimit;
+	      }
+	      if (n.machineCpuTotalCores !== null && Number.isFinite(n.machineCpuTotalCores) && n.machineCpuTotalCores > maxMachineCpuTotal) {
+	        maxMachineCpuTotal = n.machineCpuTotalCores;
+	      }
+	      if (n.fsTotal !== null && Number.isFinite(n.fsTotal) && n.fsTotal > maxFsTotal) {
+	        maxFsTotal = n.fsTotal;
+	      }
+	      if (n.txMax !== null && Number.isFinite(n.txMax) && n.txMax > maxTxMax) {
+	        maxTxMax = n.txMax;
+	      }
+	      if (n.rxMax !== null && Number.isFinite(n.rxMax) && n.rxMax > maxRxMax) {
+	        maxRxMax = n.rxMax;
+	      }
+	    }
+
+	    const links = wire.links.map((l) => ({
+	      source: String(l.source || ''),
+	      target: String(l.target || ''),
+	      kind: String(l.kind),
+	      label: (l.label === null || l.label === undefined) ? '' : String(l.label),
+	      tx: (l.tx_mbps === null || l.tx_mbps === undefined) ? 0 : Number(l.tx_mbps),
+	      rx: (l.rx_mbps === null || l.rx_mbps === undefined) ? 0 : Number(l.rx_mbps),
+	    }));
+    const linksBySource = new Map();
+    for (const l of links) {
+      if (!linksBySource.has(l.source)) linksBySource.set(l.source, []);
+      linksBySource.get(l.source).push(l);
+    }
+
+	    const children = new Map();
+	    const incomingCnt = new Map();
+	    for (const l of links) {
+	      if (l.kind === 'dashed') continue;
+	      const src = l.source;
+	      const tgt = l.target;
+	      const s = byId.get(src);
+	      const t = byId.get(tgt);
+      if (!s || !t) continue;
+      if (!children.has(src)) children.set(src, []);
+      children.get(src).push(t);
+      incomingCnt.set(tgt, (incomingCnt.get(tgt) || 0) + 1);
+    }
+    for (const [pid, arr] of children.entries()) {
+      arr.sort((a, b) => {
+        const kc = a.kind.localeCompare(b.kind);
+        if (kc !== 0) return kc;
+        return a.label.localeCompare(b.label);
+      });
+      children.set(pid, arr);
+    }
+
+    const roots = nodes
+      .filter((n) => n.kind === 'sub_cluster' && (incomingCnt.get(n.id) || 0) === 0)
+      .sort((a, b) => a.label.localeCompare(b.label));
+
+    let nextLeafY = 60;
+    const leafGapY = 150;
+    const groupGapY = 84;
+
+    function assignY(n) {
+      const kids = children.get(n.id) || [];
+      if (kids.length === 0) {
+        const y = nextLeafY;
+        nextLeafY += leafGapY;
+        n.y = y;
+        return y;
+      }
+      let sum = 0;
+      for (const k of kids) sum += assignY(k);
+      const y = sum / kids.length;
+      n.y = y;
+      return y;
+    }
+
+    for (const r of roots) {
+      assignY(r);
+      nextLeafY += groupGapY;
+    }
+
+    for (const n of nodes) {
+      n.x = xByKind[n.kind] !== undefined ? xByKind[n.kind] : marginX;
+    }
+
+	    const layout = loadLayout() || {};
+	    const viewport = { tx: 0, ty: 0, scale: 1 };
+	    {
+	      const raw = layout[VIEWPORT_LAYOUT_KEY];
+	      if (raw && typeof raw === 'object') {
+	        const tx = Number(raw.tx);
+	        const ty = Number(raw.ty);
+	        const scale = Number(raw.scale);
+	        if (Number.isFinite(tx)) viewport.tx = tx;
+	        if (Number.isFinite(ty)) viewport.ty = ty;
+	        if (Number.isFinite(scale) && scale > 0) viewport.scale = scale;
+	      }
+	    }
+
+	    function applyViewport() {
+	      world.style.transform = `translate(${viewport.tx}px, ${viewport.ty}px) scale(${viewport.scale})`;
+	    }
+
+	    function saveViewport() {
+	      layout[VIEWPORT_LAYOUT_KEY] = { tx: viewport.tx, ty: viewport.ty, scale: viewport.scale };
+	      saveLayout(layout);
+	    }
+
+	    applyViewport();
+
+	    for (const n of nodes) {
+	      const pos = layout[n.id];
+	      if (!pos || typeof pos !== 'object') continue;
+	      const x = Number(pos.x);
+      const y = Number(pos.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+      n.x = x;
+      n.y = y;
+    }
+
+    // English note:
+    // - Nodes are absolutely positioned, so they don't naturally expand the container height.
+    // - We resize the canvas to keep all nodes/edges visible (correctness over fixed viewport).
+    let maxY = 0;
+    for (const n of nodes) maxY = Math.max(maxY, n.y);
+    const minH = 860;
+    const desiredH = Math.max(minH, Math.ceil(maxY + 180));
+    canvas.style.height = desiredH + 'px';
+
+	    const nodeElById = new Map();
+
+    // Multi-select + group drag contract:
+    // - drag a rectangle on the empty canvas to select multiple nodes
+    // - drag any selected node to move the whole selection
+    // - selection is not persisted (only layout is)
+    const selectedIds = new Set();
+	    const selectBoxEl = document.createElement('div');
+	    selectBoxEl.className = 'topo_select_box';
+	    canvas.appendChild(selectBoxEl);
+
+    function setNodeSelected(id, on) {
+      const el = nodeElById.get(id);
+      if (!el) return;
+      if (on) el.classList.add('topo_selected');
+      else el.classList.remove('topo_selected');
+    }
+
+    function clearSelection() {
+      for (const id of selectedIds) setNodeSelected(id, false);
+      selectedIds.clear();
+    }
+
+    function replaceSelection(ids) {
+      clearSelection();
+      for (const id of ids) {
+        selectedIds.add(id);
+        setNodeSelected(id, true);
+      }
+    }
+
+    const ownerCurCache = new Map();
+    function ownerExternalCur(ownerId) {
+      if (ownerCurCache.has(ownerId)) return ownerCurCache.get(ownerId);
+      let tx = 0;
+      let rx = 0;
+      const out = linksBySource.get(ownerId) || [];
+      for (const l of out) {
+        const tgt = byId.get(l.target);
+        if (!tgt || tgt.kind !== 'external') continue;
+        if (Number.isFinite(l.tx) && l.tx > 0) tx += l.tx;
+        if (Number.isFinite(l.rx) && l.rx > 0) rx += l.rx;
+      }
+      const v = { tx, rx };
+      ownerCurCache.set(ownerId, v);
+      return v;
+    }
+
+    function machineExternalCur(machineId) {
+      let tx = 0;
+      let rx = 0;
+      const kids = children.get(machineId) || [];
+      for (const k of kids) {
+        if (k.kind !== 'owner') continue;
+        const v = ownerExternalCur(k.id);
+        tx += v.tx;
+        rx += v.rx;
+      }
+      return { tx, rx };
+    }
+
+    function subClusterOwnerOwnerCur(scId) {
+      let tx = 0;
+      let rx = 0;
+      const out = linksBySource.get(scId) || [];
+      for (const l of out) {
+        const tgt = byId.get(l.target);
+        if (!tgt || tgt.kind !== 'machine') continue;
+        if (Number.isFinite(l.tx) && l.tx > 0) tx += l.tx;
+        if (Number.isFinite(l.rx) && l.rx > 0) rx += l.rx;
+      }
+      return { tx, rx };
+    }
+
+	    function curForNode(n) {
+	      if (n.kind === 'owner') return ownerExternalCur(n.id);
+	      if (n.kind === 'machine') return machineExternalCur(n.id);
+	      if (n.kind === 'sub_cluster') return subClusterOwnerOwnerCur(n.id);
+	      return { tx: 0, rx: 0 };
+	    }
+
+	    function mkTwoStageBarRow(labelLeft, rightText, cur, total, globalMaxTotal, curColor) {
+	      if (!Number.isFinite(globalMaxTotal) || globalMaxTotal <= 0) return null;
+	      if (!Number.isFinite(total) || total <= 0) return null;
+	      const curN = (Number.isFinite(cur) && cur >= 0) ? cur : 0;
+	      const totalN = total;
+
+	      const row = document.createElement('div');
+	      row.className = 'topo_bar_row';
+
+	      const label = document.createElement('div');
+	      label.className = 'topo_bar_label';
+	      const l = document.createElement('span');
+	      l.textContent = labelLeft;
+	      const r = document.createElement('span');
+	      r.textContent = rightText;
+	      label.appendChild(l);
+	      label.appendChild(r);
+
+	      const bar = document.createElement('div');
+	      bar.className = 'topo_bar';
+	      const totalEl = document.createElement('div');
+	      totalEl.className = 'topo_bar_total';
+	      const curEl = document.createElement('div');
+	      curEl.className = 'topo_bar_cur';
+	      curEl.style.background = curColor;
+
+	      const totalW = Math.max(0, Math.min(1, totalN / globalMaxTotal)) * 100;
+	      const curW = Math.max(0, Math.min(1, curN / globalMaxTotal)) * 100;
+	      totalEl.style.width = totalW.toFixed(3) + '%';
+	      curEl.style.width = curW.toFixed(3) + '%';
+
+	      bar.appendChild(totalEl);
+	      bar.appendChild(curEl);
+
+	      row.appendChild(label);
+	      row.appendChild(bar);
+	      return row;
+	    }
+
+	    function mkTwoStageBarRowAllowZero(labelLeft, rightText, cur, total, globalMaxTotal, curColor) {
+	      const curN = (Number.isFinite(cur) && cur >= 0) ? cur : 0;
+	      const totalN = (Number.isFinite(total) && total >= 0) ? total : 0;
+	      const scaleMax =
+	        (Number.isFinite(globalMaxTotal) && globalMaxTotal > 0)
+	          ? globalMaxTotal
+	          : Math.max(curN, totalN, 1);
+
+	      const row = document.createElement('div');
+	      row.className = 'topo_bar_row';
+
+	      const label = document.createElement('div');
+	      label.className = 'topo_bar_label';
+	      const l = document.createElement('span');
+	      l.textContent = labelLeft;
+	      const r = document.createElement('span');
+	      r.textContent = rightText;
+	      label.appendChild(l);
+	      label.appendChild(r);
+
+	      const bar = document.createElement('div');
+	      bar.className = 'topo_bar';
+	      const totalEl = document.createElement('div');
+	      totalEl.className = 'topo_bar_total';
+	      const curEl = document.createElement('div');
+	      curEl.className = 'topo_bar_cur';
+	      curEl.style.background = curColor;
+
+	      const totalW = Math.max(0, Math.min(1, totalN / scaleMax)) * 100;
+	      const curW = Math.max(0, Math.min(1, curN / scaleMax)) * 100;
+	      totalEl.style.width = totalW.toFixed(3) + '%';
+	      curEl.style.width = curW.toFixed(3) + '%';
+
+	      bar.appendChild(totalEl);
+	      bar.appendChild(curEl);
+
+	      row.appendChild(label);
+	      row.appendChild(bar);
+	      return row;
+	    }
+
+	    function mkMachineRdmaBarRow(labelLeft, cur, allMax, enabledMax, pcieMax, curColor) {
+	      if (!Number.isFinite(allMax) || allMax <= 0) return null;
+	      const curN = (Number.isFinite(cur) && cur >= 0) ? cur : 0;
+	      const allN = allMax;
+	      const enabledN = (Number.isFinite(enabledMax) && enabledMax > 0) ? enabledMax : 0;
+	      const pcieN = (Number.isFinite(pcieMax) && pcieMax > 0) ? pcieMax : 0;
+	      const scaleMax = Math.max(allN, enabledN, curN, pcieN, 1);
+
+	      const row = document.createElement('div');
+	      row.className = 'topo_bar_row';
+
+	      const label = document.createElement('div');
+	      label.className = 'topo_bar_label';
+	      const l = document.createElement('span');
+	      l.textContent = labelLeft;
+	      const r = document.createElement('span');
+	      const parts = [
+	        `cur ${fmtLinkRateAuto(curN)}`,
+	        `en ${fmtLinkRateAuto(enabledN)}`,
+	        `all ${fmtLinkRateAuto(allN)}`,
+	      ];
+	      if (pcieN > 0) parts.push(`pcie ${fmtLinkRateAuto(pcieN)}`);
+	      r.textContent = parts.join(' | ');
+	      label.appendChild(l);
+	      label.appendChild(r);
+
+	      const bar = document.createElement('div');
+	      bar.className = 'topo_bar';
+	      const allEl = document.createElement('div');
+	      allEl.className = 'topo_bar_total';
+	      const enabledEl = document.createElement('div');
+	      enabledEl.className = 'topo_bar_enabled';
+	      const curEl = document.createElement('div');
+	      curEl.className = 'topo_bar_cur';
+	      curEl.style.background = curColor;
+
+	      allEl.style.width = (Math.max(0, Math.min(1, allN / scaleMax)) * 100).toFixed(3) + '%';
+	      enabledEl.style.width = (Math.max(0, Math.min(1, enabledN / scaleMax)) * 100).toFixed(3) + '%';
+	      curEl.style.width = (Math.max(0, Math.min(1, curN / scaleMax)) * 100).toFixed(3) + '%';
+
+	      bar.appendChild(allEl);
+	      bar.appendChild(enabledEl);
+	      bar.appendChild(curEl);
+
+	      if (pcieN > 0) {
+	        const marker = document.createElement('div');
+	        marker.className = 'topo_bar_marker';
+	        marker.style.left = (Math.max(0, Math.min(1, pcieN / scaleMax)) * 100).toFixed(3) + '%';
+	        marker.title = `PCIe theoretical one-direction upper bound: ${fmtLinkRateAuto(pcieN)}. It can be lower than aggregate NIC line-rate; the red line is only for visual differentiation and bottleneck hinting.`;
+	        bar.appendChild(marker);
+	      }
+
+	      row.appendChild(label);
+	      row.appendChild(bar);
+	      return row;
+	    }
+
+      function sectionStateKey(nodeId, sectionKey) {
+        return `__section__:${nodeId}:${sectionKey}`;
+      }
+
+      function isSectionCollapsed(nodeId, sectionKey, defaultCollapsed) {
+        const raw = layout[sectionStateKey(nodeId, sectionKey)];
+        if (raw === 0 || raw === 1) return raw === 1;
+        return !!defaultCollapsed;
+      }
+
+      function setSectionCollapsed(nodeId, sectionKey, collapsed) {
+        layout[sectionStateKey(nodeId, sectionKey)] = collapsed ? 1 : 0;
+        saveLayout(layout);
+      }
+
+      function mkSection(nodeId, sectionKey, titleText, defaultCollapsed) {
+        const sec = document.createElement('div');
+        sec.className = 'topo_section';
+        sec.setAttribute('data-collapsed', isSectionCollapsed(nodeId, sectionKey, defaultCollapsed) ? '1' : '0');
+
+        const head = document.createElement('div');
+        head.className = 'topo_section_head';
+        const title = document.createElement('div');
+        title.className = 'topo_section_title';
+        title.textContent = titleText;
+        const toggle = document.createElement('div');
+        toggle.className = 'topo_section_toggle';
+        head.appendChild(title);
+        head.appendChild(toggle);
+
+        const body = document.createElement('div');
+        body.className = 'topo_section_body';
+
+        head.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const collapsed = sec.getAttribute('data-collapsed') === '1';
+          sec.setAttribute('data-collapsed', collapsed ? '0' : '1');
+          setSectionCollapsed(nodeId, sectionKey, !collapsed);
+        });
+
+        sec.appendChild(head);
+        sec.appendChild(body);
+        return { sec, body };
+      }
+
+	    function mkNodeEl(n) {
+	      const el = document.createElement('div');
+	      el.className = 'topo_node';
+	      el.setAttribute('data-kind', n.kind);
+      el.style.left = Math.round(n.x) + 'px';
+      el.style.top = Math.round(n.y) + 'px';
+
+      const title = document.createElement('div');
+      title.className = 'topo_node_title';
+      const titleText = document.createElement('span');
+      titleText.textContent = n.label;
+      const dot = document.createElement('span');
+      dot.className = 'topo_dot';
+      title.appendChild(titleText);
+      title.appendChild(dot);
+
+      const meta1 = document.createElement('div');
+      meta1.className = 'topo_node_meta';
+      meta1.textContent = n.kind;
+
+      const meta2 = document.createElement('div');
+      meta2.className = 'topo_node_meta';
+      meta2.textContent = n.meta;
+
+      el.appendChild(title);
+      const metaSection = mkSection(n.id, 'meta', 'meta', false);
+      metaSection.body.appendChild(meta1);
+      if (n.meta) metaSection.body.appendChild(meta2);
+      el.appendChild(metaSection.sec);
+
+      const resourcesSection = mkSection(n.id, 'resources', 'resources', n.kind === 'machine');
+      let resourcesHasContent = false;
+
+      function appendResource(node) {
+        if (!node) return;
+        resourcesSection.body.appendChild(node);
+        resourcesHasContent = true;
+      }
+
+	      if (n.kind === 'machine') {
+	        if (n.machineRssSum !== null && Number.isFinite(n.machineRssSum)) {
+	          const rss = document.createElement('div');
+	          rss.className = 'topo_node_meta';
+	          rss.textContent = `rss_sum ${fmtBytes(n.machineRssSum)}`;
+	          appendResource(rss);
+	        }
+	        if (
+	          n.machineCpuUsedCores !== null && Number.isFinite(n.machineCpuUsedCores) &&
+	          n.machineCpuTotalCores !== null && Number.isFinite(n.machineCpuTotalCores)
+	        ) {
+	          const used = n.machineCpuUsedCores;
+	          const tot = n.machineCpuTotalCores;
+	          const row = mkTwoStageBarRow(
+	            'cpu',
+	            `${used.toFixed(2)}/${tot.toFixed(0)} cores`,
+	            used,
+	            tot,
+	            maxMachineCpuTotal,
+	            'rgba(34, 211, 238, 0.90)',
+	          );
+	          if (row) appendResource(row);
+	        }
+	        if (
+	          n.machineMemUsed !== null && Number.isFinite(n.machineMemUsed) &&
+	          n.machineMemTotal !== null && Number.isFinite(n.machineMemTotal)
+	        ) {
+	          const used = n.machineMemUsed;
+	          const tot = n.machineMemTotal;
+	          const row = mkTwoStageBarRow(
+	            'mem',
+	            `${fmtBytes(used)}/${fmtBytes(tot)}`,
+	            used,
+	            tot,
+	            maxMachineMemTotal,
+	            'rgba(16, 185, 129, 0.90)',
+	          );
+	          if (row) appendResource(row);
+	        }
+	        if (
+	          n.machineContainerMemUsed !== null && Number.isFinite(n.machineContainerMemUsed) &&
+	          n.machineContainerMemLimit !== null && Number.isFinite(n.machineContainerMemLimit)
+	        ) {
+	          const used = n.machineContainerMemUsed;
+	          const tot = n.machineContainerMemLimit;
+	          const row = mkTwoStageBarRow(
+	            'ct_mem',
+	            `${fmtBytes(used)}/${fmtBytes(tot)}`,
+	            used,
+	            tot,
+	            maxMachineContainerMemLimit,
+	            'rgba(59, 130, 246, 0.90)',
+	          );
+	          if (row) appendResource(row);
+	        }
+	        if (n.machineRdmaTxMax !== null && Number.isFinite(n.machineRdmaTxMax)) {
+	          const row = mkMachineRdmaBarRow(
+	            'rdma_tx',
+	            n.machineRdmaTxCur,
+	            n.machineRdmaTxMax,
+	            n.machineRdmaEnabledMax,
+	            n.machineRdmaPcieMax,
+	            'rgba(249, 115, 22, 0.90)',
+	          );
+	          if (row) appendResource(row);
+	        }
+	        if (n.machineRdmaRxMax !== null && Number.isFinite(n.machineRdmaRxMax)) {
+	          const row = mkMachineRdmaBarRow(
+	            'rdma_rx',
+	            n.machineRdmaRxCur,
+	            n.machineRdmaRxMax,
+	            n.machineRdmaEnabledMax,
+	            n.machineRdmaPcieMax,
+	            'rgba(245, 158, 11, 0.90)',
+	          );
+	          if (row) appendResource(row);
+	        }
+	      }
+
+		      if (n.kind === 'fs_mountpoint') {
+		        if (
+		          n.fsUsed !== null && Number.isFinite(n.fsUsed) &&
+		          n.fsTotal !== null && Number.isFinite(n.fsTotal)
+		        ) {
+		          const used = n.fsUsed;
+		          const tot = n.fsTotal;
+		          const fill = 'rgba(163, 163, 163, 0.85)';
+		          const row = mkTwoStageBarRow(
+		            'disk',
+		            `${fmtBytes(used)}/${fmtBytes(tot)}`,
+		            used,
+	            tot,
+	            maxFsTotal,
+	            fill,
+	          );
+	          if (row) appendResource(row);
+	        }
+	      }
+
+      if (n.kind === 'external' || n.kind === 'orphan_external') {
+        const rOk = (n.fsReadRps !== null && Number.isFinite(n.fsReadRps) && n.fsReadRps >= 0);
+        const wOk = (n.fsWriteRps !== null && Number.isFinite(n.fsWriteRps) && n.fsWriteRps >= 0);
+        if (rOk || wOk) {
+          const io = document.createElement('div');
+          io.className = 'topo_node_meta';
+          const r = rOk ? n.fsReadRps.toFixed(3) : 'N/A';
+          const w = wOk ? n.fsWriteRps.toFixed(3) : 'N/A';
+          io.textContent = `fs_io r=${r}/s w=${w}/s`;
+          appendResource(io);
+        }
+      }
+
+      if (n.procCpu !== null && Number.isFinite(n.procCpu)) {
+        const cpu = document.createElement('div');
+        cpu.className = 'topo_node_meta';
+        cpu.textContent = `cpu ${fmtPercentWide(n.procCpu)}`;
+        appendResource(cpu);
+      }
+      if (n.procRss !== null && Number.isFinite(n.procRss)) {
+        const rss = document.createElement('div');
+        rss.className = 'topo_node_meta';
+        rss.textContent = `rss ${fmtBytes(n.procRss)}`;
+        appendResource(rss);
+      }
+      if (
+        n.containerMemUsed !== null && Number.isFinite(n.containerMemUsed) &&
+        n.containerMemLimit !== null && Number.isFinite(n.containerMemLimit)
+      ) {
+        const ctMem = document.createElement('div');
+        ctMem.className = 'topo_node_meta';
+        ctMem.textContent = `ct_mem ${fmtBytes(n.containerMemUsed)}/${fmtBytes(n.containerMemLimit)}`;
+        appendResource(ctMem);
+      } else if (n.containerMemUsed !== null && Number.isFinite(n.containerMemUsed)) {
+        const ctMem = document.createElement('div');
+        ctMem.className = 'topo_node_meta';
+        ctMem.textContent = `ct_mem ${fmtBytes(n.containerMemUsed)}`;
+        appendResource(ctMem);
+      }
+
+      if (resourcesHasContent) {
+        el.appendChild(resourcesSection.sec);
+      }
+
+      const trafficSection = mkSection(n.id, 'traffic', 'traffic', true);
+      let trafficHasContent = false;
+      function appendTraffic(node) {
+        if (!node) return;
+        trafficSection.body.appendChild(node);
+        trafficHasContent = true;
+      }
+
+	      if (n.kind === 'sub_cluster' || n.kind === 'machine' || n.kind === 'owner') {
+	        const cur = curForNode(n);
+	        const txMax = (n.txMax !== null && Number.isFinite(n.txMax) && n.txMax > 0) ? n.txMax : 0;
+	        const rxMax = (n.rxMax !== null && Number.isFinite(n.rxMax) && n.rxMax > 0) ? n.rxMax : 0;
+	        const txRow = mkTwoStageBarRowAllowZero(
+	          'tx',
+	          `${fmtMbps(cur.tx)}/${fmtMbps(txMax)} Mbps`,
+	          cur.tx,
+	          txMax,
+	          maxTxMax,
+	          'rgba(16, 185, 129, 0.90)',
+	        );
+	        if (txRow) appendTraffic(txRow);
+	        const rxRow = mkTwoStageBarRowAllowZero(
+	          'rx',
+	          `${fmtMbps(cur.rx)}/${fmtMbps(rxMax)} Mbps`,
+	          cur.rx,
+	          rxMax,
+	          maxRxMax,
+	          'rgba(96, 165, 250, 0.90)',
+	        );
+	        if (rxRow) appendTraffic(rxRow);
+	      }
+      if (trafficHasContent) {
+        el.appendChild(trafficSection.sec);
+      }
+
+      if (n.detail) {
+        const detailSection = mkSection(n.id, 'detail', 'detail', true);
+        const detailBody = document.createElement('div');
+        detailBody.className = 'topo_node_meta';
+        detailBody.textContent = n.detail;
+        detailSection.body.appendChild(detailBody);
+        el.appendChild(detailSection.sec);
+      }
+
+      let isDragging = false;
+	      el.addEventListener('mousedown', (e) => {
+	        e.stopPropagation();
+	        isDragging = true;
+	        const startX = e.clientX;
+	        const startY = e.clientY;
+        if (!selectedIds.has(n.id)) {
+          replaceSelection([n.id]);
+        }
+
+        const dragIds = Array.from(selectedIds.values());
+        const origPosById = new Map();
+	        for (const id of dragIds) {
+	          const nn = byId.get(id);
+	          if (!nn) continue;
+	          origPosById.set(id, { x: nn.x, y: nn.y });
+	        }
+
+	        const onMove = (ev) => {
+	          if (!isDragging) return;
+	          const dx = (ev.clientX - startX) / viewport.scale;
+	          const dy = (ev.clientY - startY) / viewport.scale;
+	          for (const id of dragIds) {
+	            const nn = byId.get(id);
+	            const pos0 = origPosById.get(id);
+	            const eel = nodeElById.get(id);
+            if (!nn || !pos0 || !eel) continue;
+            nn.x = pos0.x + dx;
+            nn.y = pos0.y + dy;
+            eel.style.left = Math.round(nn.x) + 'px';
+            eel.style.top = Math.round(nn.y) + 'px';
+          }
+          requestAnimationFrame(drawEdges);
+        };
+        const onUp = () => {
+          isDragging = false;
+          for (const id of dragIds) {
+            const nn = byId.get(id);
+            if (!nn) continue;
+            layout[id] = { x: nn.x, y: nn.y };
+          }
+          saveLayout(layout);
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+	      });
+
+	      world.appendChild(el);
+	      nodeElById.set(n.id, el);
+	    }
+
+    for (const n of nodes) mkNodeEl(n);
+
+	    // Box selection on empty canvas.
+	    let boxSelecting = false;
+	    let boxStart = null;
+	    let panning = false;
+	    let panStart = null;
+	    canvas.addEventListener('mousedown', (e) => {
+	      if (e.button !== 0) return;
+	      const tgt = e.target;
+	      if (tgt && typeof tgt.closest === 'function' && tgt.closest('.topo_node')) {
+	        return;
+	      }
+	      if (e.ctrlKey) {
+	        panning = true;
+	        panStart = { x: e.clientX, y: e.clientY, tx: viewport.tx, ty: viewport.ty };
+	        return;
+	      }
+	      const cRect = canvas.getBoundingClientRect();
+	      boxSelecting = true;
+	      boxStart = { x: e.clientX - cRect.left, y: e.clientY - cRect.top };
+	      selectBoxEl.style.display = 'block';
+      selectBoxEl.style.left = Math.round(boxStart.x) + 'px';
+      selectBoxEl.style.top = Math.round(boxStart.y) + 'px';
+      selectBoxEl.style.width = '0px';
+      selectBoxEl.style.height = '0px';
+    });
+	    function docMouseMove(e) {
+	      if (panning && panStart) {
+	        const dx = e.clientX - panStart.x;
+	        const dy = e.clientY - panStart.y;
+	        viewport.tx = panStart.tx + dx;
+	        viewport.ty = panStart.ty + dy;
+	        applyViewport();
+	        return;
+	      }
+	      if (!boxSelecting || !boxStart) return;
+	      const cRect = canvas.getBoundingClientRect();
+	      const x = e.clientX - cRect.left;
+	      const y = e.clientY - cRect.top;
+      const x1 = Math.min(boxStart.x, x);
+      const y1 = Math.min(boxStart.y, y);
+      const x2 = Math.max(boxStart.x, x);
+      const y2 = Math.max(boxStart.y, y);
+      selectBoxEl.style.left = Math.round(x1) + 'px';
+      selectBoxEl.style.top = Math.round(y1) + 'px';
+      selectBoxEl.style.width = Math.round(x2 - x1) + 'px';
+      selectBoxEl.style.height = Math.round(y2 - y1) + 'px';
+    }
+	    function docMouseUp() {
+	      if (panning) {
+	        panning = false;
+	        panStart = null;
+	        saveViewport();
+	        return;
+	      }
+	      if (!boxSelecting || !boxStart) return;
+	      const x1 = selectBoxEl.offsetLeft;
+	      const y1 = selectBoxEl.offsetTop;
+	      const x2 = x1 + selectBoxEl.offsetWidth;
+      const y2 = y1 + selectBoxEl.offsetHeight;
+      const w = selectBoxEl.offsetWidth;
+      const h = selectBoxEl.offsetHeight;
+      selectBoxEl.style.display = 'none';
+      boxSelecting = false;
+      boxStart = null;
+
+	      // Treat a tiny rectangle as a click: clear selection.
+	      if (w < 4 && h < 4) {
+	        clearSelection();
+	        return;
+	      }
+
+	      const wx1 = (x1 - viewport.tx) / viewport.scale;
+	      const wy1 = (y1 - viewport.ty) / viewport.scale;
+	      const wx2 = (x2 - viewport.tx) / viewport.scale;
+	      const wy2 = (y2 - viewport.ty) / viewport.scale;
+	      const sx1 = Math.min(wx1, wx2);
+	      const sy1 = Math.min(wy1, wy2);
+	      const sx2 = Math.max(wx1, wx2);
+	      const sy2 = Math.max(wy1, wy2);
+
+	      const ids = [];
+	      for (const [id, el] of nodeElById.entries()) {
+	        const ex1 = el.offsetLeft;
+	        const ey1 = el.offsetTop;
+	        const ex2 = ex1 + el.offsetWidth;
+	        const ey2 = ey1 + el.offsetHeight;
+	        const overlap = !(ex2 < sx1 || ex1 > sx2 || ey2 < sy1 || ey1 > sy2);
+	        if (overlap) ids.push(id);
+	      }
+	      replaceSelection(ids);
+	    }
+
+	    canvas.addEventListener('wheel', (e) => {
+	      if (!e.ctrlKey) return;
+	      e.preventDefault();
+
+	      const SCALE_MIN = 0.2;
+	      const SCALE_MAX = 6.0;
+	      const ZOOM_INTENSITY = 0.002;
+
+	      const cRect = canvas.getBoundingClientRect();
+	      const px = e.clientX - cRect.left;
+	      const py = e.clientY - cRect.top;
+	      const wx = (px - viewport.tx) / viewport.scale;
+	      const wy = (py - viewport.ty) / viewport.scale;
+
+	      const factor = Math.exp(-e.deltaY * ZOOM_INTENSITY);
+	      const nextScale = Math.max(SCALE_MIN, Math.min(SCALE_MAX, viewport.scale * factor));
+	      viewport.scale = nextScale;
+	      viewport.tx = px - wx * viewport.scale;
+	      viewport.ty = py - wy * viewport.scale;
+	      applyViewport();
+	      saveViewport();
+	    }, { passive: false });
+
+	    function nodeCenter(id) {
+	      const el = nodeElById.get(id);
+	      if (!el) return null;
+	      return {
+        x: el.offsetLeft + el.offsetWidth / 2,
+        y: el.offsetTop + el.offsetHeight / 2,
+      };
+    }
+
+	    function drawEdges() {
+	      svg.innerHTML = '';
+	      world.querySelectorAll('.topo_edge_label').forEach((el) => el.remove());
+
+      // UI scaling: map Mbps -> px. Kept explicit to avoid hidden defaults.
+      const MBPS_PER_PX = 250;
+      const MAX_LINE_W = 18;
+      const MIN_LINE_W = 2;
+      const LINE_OFFSET_PX = 4;
+      const TX_COLOR_OK = '#10b981';
+      const RX_COLOR_OK = '#60a5fa';
+      const FLOW_DASH = '4, 10';
+      const FLOW_STROKE_W = 2.5;
+	      const FLOW_OPACITY = 0.85;
+	      const FLOW_ANIM_SECS = 0.55;
+	      const FLOW_COLOR = '#f9fafb';
+	      const DASHED_COLOR = '#9ca3af';
+	      const DASHED_DASH = '6, 6';
+
+	      {
+	        const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+	        const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+	        marker.setAttribute('id', 'topo_arrow_dashed');
+	        marker.setAttribute('markerWidth', '10');
+	        marker.setAttribute('markerHeight', '8');
+	        marker.setAttribute('refX', '9');
+	        marker.setAttribute('refY', '4');
+	        marker.setAttribute('orient', 'auto');
+	        marker.setAttribute('markerUnits', 'strokeWidth');
+	        const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+	        p.setAttribute('d', 'M 0 0 L 10 4 L 0 8 z');
+	        p.setAttribute('fill', DASHED_COLOR);
+	        marker.appendChild(p);
+	        defs.appendChild(marker);
+	        svg.appendChild(defs);
+	      }
+
+      function mbpsToWidth(mbps) {
+        if (!Number.isFinite(mbps) || mbps <= 0) return 0;
+        const w = mbps / MBPS_PER_PX;
+        return Math.max(MIN_LINE_W, Math.min(MAX_LINE_W, w));
+      }
+
+      function appendFlowOverlay(d, color, reverseDir) {
+        const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        p.setAttribute('d', d);
+        // English note:
+        // - Use a light "carrier" color so dash motion is visible on top of the solid bandwidth line.
+        // - Keep the original tx/rx color as a subtle glow to preserve direction identity.
+        p.setAttribute('stroke', FLOW_COLOR);
+        p.setAttribute('stroke-width', String(FLOW_STROKE_W));
+        p.setAttribute('fill', 'none');
+        p.setAttribute('stroke-linecap', 'round');
+        p.setAttribute('stroke-dasharray', FLOW_DASH);
+        p.style.opacity = String(FLOW_OPACITY);
+        p.style.animation = `topoFlowAnimation ${FLOW_ANIM_SECS}s linear infinite`;
+        p.style.filter = `drop-shadow(0 0 2px ${color})`;
+        if (reverseDir) {
+          p.style.animationDirection = 'reverse';
+        }
+        svg.appendChild(p);
+      }
+
+      for (const link of links) {
+        const srcId = link.source;
+        const tgtId = link.target;
+        const src = nodeCenter(srcId);
+        const tgt = nodeCenter(tgtId);
+        if (!src || !tgt) continue;
+        const sNode = byId.get(srcId);
+        const tNode = byId.get(tgtId);
+        const isOrphan = (sNode && String(sNode.kind).startsWith('orphan_')) || (tNode && String(tNode.kind).startsWith('orphan_'));
+        const txColor = isOrphan ? '#9ca3af' : TX_COLOR_OK;
+        const rxColor = isOrphan ? '#9ca3af' : RX_COLOR_OK;
+
+        const startX = src.x;
+        const startY = src.y;
+        const endX = tgt.x;
+        const endY = tgt.y;
+
+        const dx = endX - startX;
+        const cp1x = startX + dx * 0.5;
+        const cp1y = startY;
+        const cp2x = endX - dx * 0.5;
+	        const cp2y = endY;
+	        function pathDataWithOffset(offsetY) {
+	          const sy = startY + offsetY;
+	          const ey = endY + offsetY;
+	          const c1y = cp1y + offsetY;
+	          const c2y = cp2y + offsetY;
+	          return `M ${startX} ${sy} C ${cp1x} ${c1y}, ${cp2x} ${c2y}, ${endX} ${ey}`;
+	        }
+	        const d0 = pathDataWithOffset(0);
+
+	        if (link.kind === 'dashed') {
+	          const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+	          p.setAttribute('d', d0);
+	          p.setAttribute('stroke', DASHED_COLOR);
+	          p.setAttribute('stroke-width', '1.8');
+	          p.setAttribute('fill', 'none');
+	          p.setAttribute('stroke-linecap', 'round');
+	          p.setAttribute('stroke-dasharray', DASHED_DASH);
+	          p.setAttribute('marker-end', 'url(#topo_arrow_dashed)');
+	          p.style.opacity = '0.9';
+	          svg.appendChild(p);
+	          continue;
+	        }
+
+	        const bgPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+	        bgPath.setAttribute('d', d0);
+	        bgPath.setAttribute('stroke', '#374151');
+	        bgPath.setAttribute('stroke-width', 5);
+	        bgPath.setAttribute('fill', 'none');
+        bgPath.setAttribute('stroke-linecap', 'round');
+        bgPath.style.opacity = '0.35';
+        svg.appendChild(bgPath);
+
+        const txMbpsRaw = link.tx;
+        const rxMbpsRaw = link.rx;
+
+        const txW = mbpsToWidth(txMbpsRaw || 0);
+        const rxW = mbpsToWidth(rxMbpsRaw || 0);
+
+        // English note (flow direction semantics):
+        // - The topology edge direction is "parent -> child" in the hierarchy.
+        // - But tx/rx values on higher-level edges are aggregated from children (owners) and are
+        //   conceptually exchanged via the parent node (sub_cluster/machine).
+        // - To avoid misleading arrows, we reverse tx direction on:
+        //   - sub_cluster -> machine (cross-group owner<->owner)
+        //   - machine -> owner (owner<->owner)
+        // - owner -> external keeps tx forward (owner<->external).
+        let txReverse = false;
+        if (sNode && tNode) {
+          const sk = String(sNode.kind);
+          const tk = String(tNode.kind);
+          if (sk === 'sub_cluster' && tk === 'machine') txReverse = true;
+          if (sk === 'machine' && tk === 'owner') txReverse = true;
+        }
+
+        if (txW > 0) {
+          const d = pathDataWithOffset(-LINE_OFFSET_PX);
+          const txPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          txPath.setAttribute('d', d);
+          txPath.setAttribute('stroke', txColor);
+          txPath.setAttribute('stroke-width', txW);
+          txPath.setAttribute('fill', 'none');
+          txPath.setAttribute('stroke-linecap', 'round');
+          txPath.style.filter = `drop-shadow(0 0 4px ${txColor})`;
+          svg.appendChild(txPath);
+          appendFlowOverlay(d, txColor, txReverse);
+        }
+
+        if (rxW > 0) {
+          const d = pathDataWithOffset(LINE_OFFSET_PX);
+          const rxPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          rxPath.setAttribute('d', d);
+          rxPath.setAttribute('stroke', rxColor);
+          rxPath.setAttribute('stroke-width', rxW);
+          rxPath.setAttribute('fill', 'none');
+          rxPath.setAttribute('stroke-linecap', 'round');
+          rxPath.style.filter = `drop-shadow(0 0 4px ${rxColor})`;
+          svg.appendChild(rxPath);
+          // rx direction is opposite to tx on the same edge.
+          appendFlowOverlay(d, rxColor, !txReverse);
+        }
+
+        const labelText = link.label;
+        const labelParts = [];
+        if (txW > 0) labelParts.push(`tx=${fmtMbps(txMbpsRaw)}Mbps`);
+        if (rxW > 0) labelParts.push(`rx=${fmtMbps(rxMbpsRaw)}Mbps`);
+        if (labelText) labelParts.push(labelText);
+        if (labelParts.length > 0) {
+          const t = 0.5;
+          const midX = (1-t)*(1-t)*(1-t)*startX + 3*(1-t)*(1-t)*t*cp1x + 3*(1-t)*t*t*cp2x + t*t*t*endX;
+          const midY = (1-t)*(1-t)*(1-t)*startY + 3*(1-t)*(1-t)*t*cp1y + 3*(1-t)*t*t*cp2y + t*t*t*endY;
+
+	          const label = document.createElement('div');
+	          label.className = 'topo_edge_label';
+	          label.style.left = midX + 'px';
+	          label.style.top = midY + 'px';
+	          label.textContent = labelParts.join(' ');
+	          world.appendChild(label);
+	        }
+	      }
+	    }
+
+    drawEdges();
+
+    topoActive = { drawEdges, docMouseMove, docMouseUp };
+    if (!topoResizeWired) {
+      topoResizeWired = true;
+      window.addEventListener('resize', () => {
+        if (topoActive) topoActive.drawEdges();
+      });
+    }
+    if (!topoDocWired) {
+      topoDocWired = true;
+      document.addEventListener('mousemove', (e) => {
+        if (topoActive && topoActive.docMouseMove) topoActive.docMouseMove(e);
+      });
+      document.addEventListener('mouseup', () => {
+        if (topoActive && topoActive.docMouseUp) topoActive.docMouseUp();
+      });
+    }
+  }
+
+  initTopology();
+  wireTimeControls();
+
+  // English note: Replace-SSR Contract v1 (same contract as other pages).
+  window.fluxon_cli_auto_refresh_hooks = {
+    captureState: () => {
+      const modeSel = document.getElementById('topo_time_mode');
+      const lookbackSel = document.getElementById('topo_time_lookback');
+      const atInput = document.getElementById('topo_time_at_input');
+      return {
+        topo_time_mode: modeSel ? (modeSel.value || '') : '',
+        topo_time_lookback: lookbackSel ? (lookbackSel.value || '') : '',
+        topo_time_at_input: atInput ? (atInput.value || '') : '',
+      };
+    },
+    restoreState: (state) => {
+      if (!state || typeof state !== 'object') return;
+      const modeSel = document.getElementById('topo_time_mode');
+      const lookbackSel = document.getElementById('topo_time_lookback');
+      const atInput = document.getElementById('topo_time_at_input');
+      if (modeSel && typeof state.topo_time_mode === 'string') modeSel.value = state.topo_time_mode;
+      if (lookbackSel && typeof state.topo_time_lookback === 'string') lookbackSel.value = state.topo_time_lookback;
+      if (atInput && typeof state.topo_time_at_input === 'string') atInput.value = state.topo_time_at_input;
+    },
+    afterReplace: () => {
+      initTopology();
+      wireTimeControls();
+    },
+  };
+  if (!hasAt0) {
+    window.fluxon_cli_auto_refresh_cfg = {
+      mode: 'replace_app',
+      refreshSecs: refreshSecs,
+      url: window.location.href,
+      appId: 'app',
+      countdownId: 'refresh-in',
+    };
+  }
+})();
+</script>
+{% endblock %}

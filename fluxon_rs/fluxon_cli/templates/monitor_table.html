@@ -1,0 +1,1870 @@
+{% extends "layout.html" %}
+
+{% block title %}Fluxon Monitor{% endblock %}
+
+{% block head_extra %}
+<style>
+  #app { color: #111827; }
+  /* KV client log tail box (dark, compact). */
+  .kvlog_wrap { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 12px; }
+  .kvlog_box { height: 260px; overflow: auto; border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px; background: #0b1020; color: #e5e7eb; font-size: 10px; line-height: 1.25; }
+  .kvlog_line { white-space: pre-wrap; word-break: break-word; border-bottom: 1px solid rgba(255,255,255,0.06); padding: 4px 0; }
+  .kvlog_ts { color: #94a3b8; }
+  .kvlog_member { color: #60a5fa; }
+  .kvlog_target { color: #a78bfa; }
+  .kvlog_loc { color: #94a3b8; }
+  .kvlog_pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; border: 1px solid rgba(148,163,184,0.35); }
+  .kvlog_pill_warn { color: #fde68a; }
+  .kvlog_pill_error { color: #fca5a5; }
+  .kvlog_pill_info { color: #86efac; }
+  .kvlog_pill_debug { color: #93c5fd; }
+  .kvlog_pill_trace { color: #cbd5e1; }
+  .rdma_owner_grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 12px; }
+  .rdma_owner_card { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; display: grid; gap: 8px; background: #fff; }
+  .rdma_device_list { display: grid; gap: 8px; }
+  .rdma_device_card { display: grid; gap: 6px; padding: 8px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f8fafc; }
+  .rdma_device_item { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .rdma_port_chip_list { display: flex; gap: 6px; flex-wrap: wrap; padding-left: 24px; }
+  .rdma_port_chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border: 1px solid #cbd5e1; border-radius: 999px; background: #fff; }
+  .rdma_port_chip.rdma_health_ok { border-color: #86efac; background: #f0fdf4; }
+  .rdma_port_chip.rdma_health_warn { border-color: #fcd34d; background: #fffbeb; }
+  .rdma_port_chip.rdma_health_bad { border-color: #fca5a5; background: #fef2f2; }
+  .rdma_health_ok { color: #166534; }
+  .rdma_health_warn { color: #a16207; }
+  .rdma_health_bad { color: #b91c1c; }
+  .metric_panel_head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .metric_panel_toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .metric_grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 12px; }
+  .metric_card { border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; padding: 12px; display: grid; gap: 8px; cursor: pointer; }
+  .metric_card:hover { border-color: #94a3b8; }
+  .metric_card.metric_card_selected { border-color: #0f766e; box-shadow: 0 0 0 1px rgba(15,118,110,0.12); }
+  .metric_card_head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .metric_card_label { font-weight: 600; color: #0f172a; }
+  .metric_card_value { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #334155; }
+  .metric_chart { width: 100%; height: 96px; display: block; }
+  .metric_chart_path { fill: none; stroke: #0f766e; stroke-width: 2; }
+  .metric_chart_area { fill: rgba(15,118,110,0.10); }
+  .metric_chart_empty { display: grid; place-items: center; height: 96px; color: #94a3b8; font-size: 12px; border: 1px dashed #cbd5e1; border-radius: 8px; }
+  .metric_warn_box { margin-top: 8px; display: grid; gap: 4px; }
+  .member_metric_section { margin-top: 12px; display: grid; gap: 8px; }
+  .member_metric_head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .member_metric_grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+  .member_metric_card { border: 1px solid #e5e7eb; border-radius: 10px; background: #f8fafc; padding: 12px; display: grid; gap: 8px; }
+  .member_metric_meta { display: grid; gap: 2px; }
+  .member_metric_id { font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .member_metric_sub { color: #64748b; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+</style>
+{% endblock %}
+
+{% block body %}
+<div id="app">
+	  <div class="top">
+    <h1>Cluster <span class="mono">{{ header.cluster_name }}</span> <span class="muted">({{ header.member_kind }})</span></h1>
+    <div class="card">
+      <div class="muted">version: <span class="mono">{{ build.version }}</span></div>
+      <div class="muted">commit: <span class="mono">{{ build.commit }}</span></div>
+      <div class="muted">source-sha256: <span class="mono">{{ build.source_sha256 }}</span></div>
+    </div>
+    <div class="card">
+      <form method="get" action="/view" class="formrow">
+        <label>cluster_name</label><input name="cluster_name" value="{{ header.cluster_name }}" size="36" />
+        <label>member_kind</label>
+        <select name="member_kind">
+          {% for k in member_kinds %}
+            <option value="{{ k.query }}"{% if k.selected %} selected{% endif %}>{{ k.display }}</option>
+          {% endfor %}
+        </select>
+        {% if header.member_kind_query == "fs" %}
+          <span class="muted tiny">members: agent/controller only</span>
+        {% else %}
+          <label>member_roles</label>
+          {% for r in member_roles %}
+            <label><input type="checkbox" name="member_roles" value="{{ r.query }}"{% if r.checked %} checked{% endif %} />{{ r.display }}</label>
+          {% endfor %}
+        {% endif %}
+        <button type="submit">Go</button>
+        <a class="muted" href="/" style="margin-left:6px">Landing</a>
+      </form>
+      <div class="muted">etcd_endpoints: <span class="mono">{{ header.etcd_endpoints }}</span></div>
+      {% if header.member_kind_query != "fs" %}
+        <div class="muted">prometheus_base_url: <span class="mono">{{ header.prometheus_base_url }}</span></div>
+      {% endif %}
+      {% if header.master_network_subnet_whitelist.is_some() %}
+        <div class="muted">master.network.subnet_whitelist: <span class="mono">{{ header.master_network_subnet_whitelist.as_ref().unwrap() }}</span></div>
+      {% endif %}
+      <div class="muted">logs:
+        {% for r in log_roles %}
+          {% if loop.index0 > 0 %} | {% endif %}
+          <a href="/logs?cluster_name={{ header.cluster_name_encoded }}&member_kind={{ header.member_kind_query }}&role={{ r.query }}">{{ r.display }}</a>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="card">
+      <div class="row">
+        {% for p in total_pills %}
+          <span class="pill {{ p.class_name }}">{{ p.text }}</span>
+        {% endfor %}
+      </div>
+      {% if header.member_kind_query == "fs" %}
+        <div class="muted">Data source: etcd membership (filtered by fluxon_fs cmdline/instance_key markers)</div>
+      {% else %}
+        <div class="muted">Data source: etcd membership + Prometheus instant queries</div>
+      {% endif %}
+      <div class="muted">Auto refresh in <span id="refresh-in" class="mono">{{ refresh_secs }}</span>s</div>
+    </div>
+	  </div>
+
+    {% if header.member_kind_query == "kv" %}
+      <details class="card" open data-state-key="metric_trends">
+        <summary><b>Metric Trends</b> <span class="muted">(KV aggregate + member drill-down)</span></summary>
+        <div class="metric_panel_head">
+          <div class="muted">Aggregate cards use current member role filters. Click a card to load member-level trends.</div>
+          <div class="metric_panel_toolbar">
+            <label for="metric_window_select">Window</label>
+            <select id="metric_window_select">
+              <option value="5m">5m</option>
+              <option value="15m" selected>15m</option>
+              <option value="1h">1h</option>
+              <option value="6h">6h</option>
+              <option value="24h">24h</option>
+            </select>
+            <button type="button" id="metric_reload_btn">Reload</button>
+          </div>
+        </div>
+        <div id="metric_panel_status" class="muted tiny" style="margin-top:8px"></div>
+        <div id="metric_panel_warn" class="metric_warn_box"></div>
+        <div id="metric_grid" class="metric_grid"></div>
+        <div id="member_metric_section" class="member_metric_section" style="display:none">
+          <div class="member_metric_head">
+            <div>
+              <b id="member_metric_title">Member Metric</b>
+              <div id="member_metric_subtitle" class="muted tiny"></div>
+            </div>
+            <button type="button" id="member_metric_toggle_btn">Show all</button>
+          </div>
+          <div id="member_metric_status" class="muted tiny"></div>
+          <div id="member_metric_warn" class="metric_warn_box"></div>
+          <div id="member_metric_grid" class="member_metric_grid"></div>
+        </div>
+      </details>
+    {% endif %}
+
+    {% if header.member_kind_query == "kv" %}
+      <details class="card" open data-state-key="owner_rdma_control">
+        <summary><b>Owner RDMA Control</b> <span class="muted">({{ owner_rdma_controls.len() }} owners)</span></summary>
+        {% if owner_rdma_controls.is_empty() %}
+          <div class="muted">No owner members discovered.</div>
+        {% else %}
+          <div class="rdma_owner_grid">
+            {% for owner in owner_rdma_controls %}
+              <form method="post" action="/r/ops/{{ header.cluster_name }}/fluxon/kv/rdma_devices" class="rdma_owner_card">
+                <input type="hidden" name="member_id" value="{{ owner.member_id }}" />
+                <input type="hidden" name="member_start_time" value="{{ owner.node_start_time }}" />
+                <div>
+                  <div><b>{{ owner.member_id }}</b> <span class="muted mono">{{ owner.node_key }}</span></div>
+                  <div class="muted tiny">
+                    host=<span class="mono">{{ owner.hostname_text }}</span>
+                    ip=<span class="mono">{{ owner.accessible_ip_text }}</span>
+                    start=<span class="mono">{{ owner.node_start_time }}</span>
+                    <span class="muted tiny local-time" data-epoch="{{ owner.node_start_time }}"></span>
+                  </div>
+                </div>
+                <div class="muted">
+                  transfer_engine=<span class="mono {{ owner.transfer_engine_class }}">{{ owner.transfer_engine_text }}</span>
+                  {% match owner.transfer_engine_detail %}
+                    {% when Some with (detail) %}
+                      <span class="muted tiny mono">{{ detail }}</span>
+                    {% when None %}
+                    {% endmatch %}
+                  runtime=<span class="mono">{{ owner.runtime_state_text }}</span>
+                </div>
+                {% match owner.probe_error %}
+                  {% when Some with (err) %}
+                    <div class="bad tiny">{{ err }}</div>
+                  {% when None %}
+                  {% endmatch %}
+                {% if owner.devices.len() > 0 %}
+                  <div class="rdma_device_list">
+                    {% for device in owner.devices %}
+                      <div class="rdma_device_card">
+                        <label class="rdma_device_item">
+                          <input type="checkbox" name="enabled_devices" value="{{ device.device }}"{% if device.desired_enabled %} checked{% endif %}{% if device.disable_checkbox %} disabled{% endif %} />
+                          <span class="mono">{{ device.device }}</span>
+                          <span class="mono tiny {{ device.health_class }}">{{ device.health_text }}</span>
+                          <span class="muted tiny">{{ device.detail_text }}</span>
+                          <span class="mono tiny">{% if device.effective_enabled %}effective{% else %}inactive{% endif %}</span>
+                        </label>
+                        {% if device.ports.len() > 0 %}
+                          <div class="rdma_port_chip_list">
+                            {% for port in device.ports %}
+                              <span class="rdma_port_chip {{ port.state_class }}" title="{{ port.title_text }}">
+                                <span class="mono">{{ port.port_key }}</span>
+                                <span class="tiny">{{ port.state_text }}</span>
+                              </span>
+                            {% endfor %}
+                          </div>
+                        {% else %}
+                          <div class="muted tiny">ports: none</div>
+                        {% endif %}
+                      </div>
+                    {% endfor %}
+                  </div>
+                  <div><button type="submit">Apply</button></div>
+                {% else %}
+                  <div class="muted">{{ owner.runtime_state_text }}</div>
+                {% endif %}
+              </form>
+            {% endfor %}
+          </div>
+        {% endif %}
+      </details>
+    {% endif %}
+
+    {% if header.member_kind_query == "kv" %}
+      <details class="card" open data-state-key="owner_tokio_health">
+        <summary><b>Owner Tokio Health</b> <span class="muted">({{ owner_tokio_rows.len() }} owners)</span></summary>
+        <div class="muted">Stable Tokio runtime metrics sampled over the observe window. Non-zero queue depth with high busy% or high max_worker_busy% is a strong runtime stall signal.</div>
+        {% if owner_tokio_rows.is_empty() %}
+          <div class="muted">No owner members discovered.</div>
+        {% else %}
+          <div class="tablewrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>owner_id</th>
+                  <th>hostname</th>
+                  <th>accessible_ip</th>
+                  <th>workers</th>
+                  <th>alive_tasks</th>
+                  <th>queue_depth</th>
+                  <th>busy%</th>
+                  <th>max_worker_busy%</th>
+                  <th>park_unpark/s</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in owner_tokio_rows %}
+                  <tr>
+                    <td class="mono">{{ row.member_id }}</td>
+                    <td class="mono">{{ row.hostname_text }}</td>
+                    <td class="mono">{{ row.accessible_ip_text }}</td>
+                    <td class="mono">{{ row.workers_text }}</td>
+                    <td class="mono">{{ row.alive_tasks_text }}</td>
+                    <td class="mono">{{ row.queue_depth_text }}</td>
+                    <td class="mono">{{ row.busy_text }}</td>
+                    <td class="mono">{{ row.max_worker_busy_text }}</td>
+                    <td class="mono">{{ row.park_unpark_rate_text }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% endif %}
+      </details>
+    {% endif %}
+
+    {% if header.member_kind_query != "fs" %}
+		      <details class="card" open data-state-key="transfer_links">
+		      <summary><b>Transfer link matrix</b> <span class="muted">({{ matrix.node_count }} nodes, {{ matrix.edge_count }} records)</span></summary>
+		      <div class="muted">etcd prefix (p2p): <span class="mono">/{{ header.cluster_name }}/transfer_link/p2p/</span></div>
+		      <div class="muted">etcd prefix (te): <span class="mono">/{{ header.cluster_name }}/transfer_link/te/</span></div>
+		      <div class="muted">p2p direct: outgoing connect_to alive (initiator-side)</div>
+	    <div class="mxlegend">
+	      <span class="mxlegenditem"><span class="mono">cell=[p2p][te]</span></span>
+      <span class="mxlegenditem"><span class="mxlegendcell"><span class="mxpx mxp2p_ice"></span><span class="mxpx"></span></span>p2p ice</span>
+      <span class="mxlegenditem"><span class="mxlegendcell"><span class="mxpx mxp2p_tcp"></span><span class="mxpx"></span></span>p2p tcp</span>
+      <span class="mxlegenditem"><span class="mxlegendcell"><span class="mxpx mxp2p_websocket"></span><span class="mxpx"></span></span>p2p websocket</span>
+      <span class="mxlegenditem"><span class="mxlegendcell"><span class="mxpx mxp2p_quic"></span><span class="mxpx"></span></span>p2p quic</span>
+      <span class="mxlegenditem"><span class="mxlegendcell"><span class="mxpx mxp2p_tquic"></span><span class="mxpx"></span></span>p2p tquic</span>
+      <span class="mxlegenditem"><span class="mxlegendcell"><span class="mxpx mxp2p_unknown"></span><span class="mxpx"></span></span>p2p unknown</span>
+      <span class="mxlegenditem"><span class="mxlegendcell"><span class="mxpx"></span><span class="mxpx mxte"></span></span>te direct</span>
+      <span class="mxlegenditem"><span class="mxlegendcell"><span class="mxpx"></span><span class="mxpx mxtequic"></span></span>tequic</span>
+      <span class="mxlegenditem"><span class="mxlegendcell"><span class="mxpx mxalt"></span><span class="mxpx mxalt"></span></span>relay/fallback</span>
+    </div>
+
+    {% if matrix.unknown_routes.len() > 0 %}
+      <div class="warn">
+        <div><b>Unknown route values</b></div>
+        {% for v in matrix.unknown_routes %}
+          <div class="mono">- {{ v }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+	    {% if matrix.node_count == 0 %}
+	      <div class="muted">N/A</div>
+	    {% else %}
+	      <div class="mxwrap">
+        <table class="mx">
+          <thead>
+            <tr>
+              <th class="corner"></th>
+              {% for n in matrix.nodes %}
+                <th class="colhdr"><div class="rot"><span class="mono {{ n.cls }}">{{ n.key }}</span></div></th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in matrix.rows %}
+              <tr>
+                <th class="rowhdr mono {{ r.cls }}">{{ r.key }}</th>
+                {% for c in r.cells %}
+                  <td class="{{ c.td_cls }}"><div class="mxcell"><span class="{{ c.p2p_cls }}"></span><span class="{{ c.te_cls }}"></span></div></td>
+                {% endfor %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+	      </div>
+	    {% endif %}
+	    </details>
+    {% endif %}
+
+	  <div class="card row" data-state-key="table_controls">
+	    <div class="formrow">
+	      <label>Columns</label>
+	      <span id="visible_cols_box" class="formrow">
+	        <label><input type="checkbox" class="col_toggle" value="node_key" checked />node_key</label>
+	        <label><input type="checkbox" class="col_toggle" value="member_id" checked />member_id</label>
+	        <label><input type="checkbox" class="col_toggle" value="logs" checked />logs</label>
+	        <label><input type="checkbox" class="col_toggle" value="role" checked />role</label>
+	        <label><input type="checkbox" class="col_toggle" value="pid" checked />pid</label>
+	        <label><input type="checkbox" class="col_toggle" value="cmd" checked />cmd</label>
+	        <label><input type="checkbox" class="col_toggle" value="start_time" checked />start_time</label>
+	        <label><input type="checkbox" class="col_toggle" value="hostname" checked />hostname</label>
+	        <label><input type="checkbox" class="col_toggle" value="accessible_ip" checked />accessible_ip</label>
+	        <label><input type="checkbox" class="col_toggle" value="shared_mem_dir" checked />shared_mem_dir</label>
+	        <label><input type="checkbox" class="col_toggle" value="p2p_listen_port" checked />p2p_listen_port</label>
+          {% if header.member_kind_query == "kv" %}
+	        <label><input type="checkbox" class="col_toggle" value="rdma" checked />rdma</label>
+          {% endif %}
+          {% if header.member_kind_query != "fs" %}
+	          <label><input type="checkbox" class="col_toggle" value="cpu" checked />cpu</label>
+	          <label><input type="checkbox" class="col_toggle" value="mem_used" checked />mem_used</label>
+	          <label><input type="checkbox" class="col_toggle" value="rss" checked />rss</label>
+	          <label><input type="checkbox" class="col_toggle" value="tx" checked />tx</label>
+	          <label><input type="checkbox" class="col_toggle" value="rx" checked />rx</label>
+	          <label><input type="checkbox" class="col_toggle" value="put_rps" checked />put_rps</label>
+	          <label><input type="checkbox" class="col_toggle" value="get_rps" checked />get_rps</label>
+	          <label><input type="checkbox" class="col_toggle" value="put_avg" checked />put_avg</label>
+	          <label><input type="checkbox" class="col_toggle" value="get_avg" checked />get_avg</label>
+	          <label><input type="checkbox" class="col_toggle" value="seg_used" checked />seg_used</label>
+	          <label><input type="checkbox" class="col_toggle" value="seg_cap" checked />seg_cap</label>
+          {% endif %}
+	      </span>
+	      <button type="button" id="clear_filter">Clear</button>
+	    </div>
+	    <div class="formrow" style="margin-top:8px">
+	      <label>Sort #1</label>
+	      <select id="sort_1_key">
+	        <option value="none">none</option>
+	        <option value="node_key">node_key</option>
+	        <option value="member_id">member_id</option>
+	        <option value="role">role</option>
+	        <option value="start_time">start_time</option>
+	        <option value="cpu">cpu</option>
+	        <option value="mem_used">mem_used</option>
+	        <option value="rss">rss</option>
+	        <option value="tx">tx</option>
+	        <option value="rx">rx</option>
+	        <option value="put_rps">put_rps</option>
+	        <option value="get_rps">get_rps</option>
+	        <option value="put_avg">put_avg</option>
+	        <option value="get_avg">get_avg</option>
+	        <option value="seg_used">seg_used</option>
+	        <option value="seg_cap">seg_cap</option>
+	      </select>
+	      <select id="sort_1_dir">
+	        <option value="asc">asc</option>
+	        <option value="desc">desc</option>
+	      </select>
+	    </div>
+	    <div class="formrow" id="sort_2_row" style="margin-top:8px; display:none">
+	      <label>Sort #2</label>
+	      <select id="sort_2_key">
+	        <option value="none">none</option>
+	        <option value="node_key">node_key</option>
+	        <option value="member_id">member_id</option>
+	        <option value="role">role</option>
+	        <option value="start_time">start_time</option>
+	        <option value="cpu">cpu</option>
+	        <option value="mem_used">mem_used</option>
+	        <option value="rss">rss</option>
+	        <option value="tx">tx</option>
+	        <option value="rx">rx</option>
+	        <option value="put_rps">put_rps</option>
+	        <option value="get_rps">get_rps</option>
+	        <option value="put_avg">put_avg</option>
+	        <option value="get_avg">get_avg</option>
+	        <option value="seg_used">seg_used</option>
+	        <option value="seg_cap">seg_cap</option>
+	      </select>
+	      <select id="sort_2_dir">
+	        <option value="asc">asc</option>
+	        <option value="desc">desc</option>
+	      </select>
+	    </div>
+	    <div class="formrow" id="sort_3_row" style="margin-top:8px; display:none">
+	      <label>Sort #3</label>
+	      <select id="sort_3_key">
+	        <option value="none">none</option>
+	        <option value="node_key">node_key</option>
+	        <option value="member_id">member_id</option>
+	        <option value="role">role</option>
+	        <option value="start_time">start_time</option>
+	        <option value="cpu">cpu</option>
+	        <option value="mem_used">mem_used</option>
+	        <option value="rss">rss</option>
+	        <option value="tx">tx</option>
+	        <option value="rx">rx</option>
+	        <option value="put_rps">put_rps</option>
+	        <option value="get_rps">get_rps</option>
+	        <option value="put_avg">put_avg</option>
+	        <option value="get_avg">get_avg</option>
+	        <option value="seg_used">seg_used</option>
+	        <option value="seg_cap">seg_cap</option>
+	      </select>
+	      <select id="sort_3_dir">
+	        <option value="asc">asc</option>
+	        <option value="desc">desc</option>
+	      </select>
+	    </div>
+	    <div class="formrow" id="sort_4_row" style="margin-top:8px; display:none">
+	      <label>Sort #4</label>
+	      <select id="sort_4_key">
+	        <option value="none">none</option>
+	        <option value="node_key">node_key</option>
+	        <option value="member_id">member_id</option>
+	        <option value="role">role</option>
+	        <option value="start_time">start_time</option>
+	        <option value="cpu">cpu</option>
+	        <option value="mem_used">mem_used</option>
+	        <option value="rss">rss</option>
+	        <option value="tx">tx</option>
+	        <option value="rx">rx</option>
+	        <option value="put_rps">put_rps</option>
+	        <option value="get_rps">get_rps</option>
+	        <option value="put_avg">put_avg</option>
+	        <option value="get_avg">get_avg</option>
+	        <option value="seg_used">seg_used</option>
+	        <option value="seg_cap">seg_cap</option>
+	      </select>
+	      <select id="sort_4_dir">
+	        <option value="asc">asc</option>
+	        <option value="desc">desc</option>
+	      </select>
+	    </div>
+	    <div class="muted tiny" style="margin-top:8px">Filters are column-typed: role=set select; start_time=range (epoch seconds); others=case-insensitive substring.</div>
+	    <div id="filter_err" class="muted tiny" style="margin-top:6px"></div>
+	  </div>
+
+	  <div class="tablewrap">
+	    <table>
+	      <thead>
+	        <tr>
+	          <th data-col="node_key">node_key</th>
+	          <th data-col="member_id">member_id</th>
+	          <th data-col="logs">logs</th>
+	          <th data-col="role">role</th>
+	          <th data-col="pid">pid</th>
+	          <th data-col="cmd">cmd</th>
+	          <th data-col="start_time">start_time</th>
+	          <th data-col="hostname">hostname</th>
+	          <th data-col="accessible_ip">accessible_ip</th>
+	          <th data-col="shared_mem_dir">shared_mem_dir</th>
+	          <th data-col="p2p_listen_port">p2p_listen_port</th>
+          {% if header.member_kind_query == "kv" %}
+	          <th data-col="rdma">rdma</th>
+          {% endif %}
+	          <th data-col="cpu">cpu</th>
+	          <th data-col="mem_used">mem_used</th>
+	          <th data-col="rss">rss</th>
+	          <th data-col="tx">tx</th>
+	          <th data-col="rx">rx</th>
+	          <th data-col="put_rps">put_rps</th>
+	          <th data-col="get_rps">get_rps</th>
+	          <th data-col="put_avg">put_avg</th>
+	          <th data-col="get_avg">get_avg</th>
+	          <th data-col="seg_used">seg_used</th>
+	          <th data-col="seg_cap">seg_cap</th>
+	        </tr>
+	        <tr>
+	          <th data-col="node_key"><input id="f_node_key" type="text" placeholder="filter" /></th>
+	          <th data-col="member_id"><input id="f_member_id" type="text" placeholder="filter" /></th>
+	          <th data-col="logs"></th>
+	          <th data-col="role">
+	            <select id="f_role" multiple size="3">
+                {% if header.member_kind_query == "fs" %}
+                  <option value="controller">controller</option>
+                  <option value="agent">agent</option>
+                {% else %}
+	                {% for r in member_roles %}
+	                  <option value="{{ r.query }}">{{ r.display }}</option>
+	                {% endfor %}
+                {% endif %}
+	            </select>
+	          </th>
+	          <th data-col="pid"><input id="f_pid" type="text" placeholder="filter" /></th>
+	          <th data-col="cmd"><input id="f_cmd" type="text" placeholder="filter" /></th>
+	          <th data-col="start_time">
+	            <div class="cell">
+	              <input id="f_start_time_min" type="text" placeholder="min(epoch)" />
+	              <input id="f_start_time_max" type="text" placeholder="max(epoch)" />
+	            </div>
+	          </th>
+	          <th data-col="hostname"><input id="f_hostname" type="text" placeholder="filter" /></th>
+	          <th data-col="accessible_ip"><input id="f_accessible_ip" type="text" placeholder="filter" /></th>
+	          <th data-col="shared_mem_dir"><input id="f_shared_mem_dir" type="text" placeholder="filter" /></th>
+	          <th data-col="p2p_listen_port"><input id="f_p2p_listen_port" type="text" placeholder="filter" /></th>
+          {% if header.member_kind_query == "kv" %}
+	          <th data-col="rdma"></th>
+          {% endif %}
+	          <th data-col="cpu"><input id="f_cpu" type="text" placeholder="filter" /></th>
+	          <th data-col="mem_used"><input id="f_mem_used" type="text" placeholder="filter" /></th>
+	          <th data-col="rss"><input id="f_rss" type="text" placeholder="filter" /></th>
+	          <th data-col="tx"><input id="f_tx" type="text" placeholder="filter" /></th>
+	          <th data-col="rx"><input id="f_rx" type="text" placeholder="filter" /></th>
+	          <th data-col="put_rps"><input id="f_put_rps" type="text" placeholder="filter" /></th>
+	          <th data-col="get_rps"><input id="f_get_rps" type="text" placeholder="filter" /></th>
+	          <th data-col="put_avg"><input id="f_put_avg" type="text" placeholder="filter" /></th>
+	          <th data-col="get_avg"><input id="f_get_avg" type="text" placeholder="filter" /></th>
+	          <th data-col="seg_used"><input id="f_seg_used" type="text" placeholder="filter" /></th>
+	          <th data-col="seg_cap"><input id="f_seg_cap" type="text" placeholder="filter" /></th>
+	        </tr>
+	      </thead>
+      <tbody id="member_rows">
+        {% for row in rows %}
+	          <tr
+	            data-node-key="{{ row.node_key }}"
+	            data-member-id="{{ row.member_id }}"
+	            data-role="{{ row.role_text }}"
+	            data-pid="{{ row.pid_text }}"
+	            data-cmd="{{ row.cmd_text }}"
+	            data-start-time="{{ row.node_start_time }}"
+	            data-hostname="{{ row.hostname_text }}"
+	            data-accessible-ip="{{ row.accessible_ip_text }}"
+	            data-shared-mem-dir="{{ row.shared_mem_dir_text }}"
+	            data-p2p-listen-port="{{ row.p2p_listen_port_text }}"
+              data-rdma="{{ row.rdma_text }}"
+	            data-cpu-text="{{ row.cpu_text }}"
+	            data-mem-used-text="{{ row.mem_used_text }}"
+	            data-rss-text="{{ row.rss_text }}"
+	            data-tx-text="{{ row.tx_text }}"
+            data-rx-text="{{ row.rx_text }}"
+            data-put-rps-text="{{ row.put_rps_text }}"
+            data-get-rps-text="{{ row.get_rps_text }}"
+            data-put-avg-text="{{ row.put_avg_text }}"
+            data-get-avg-text="{{ row.get_avg_text }}"
+            data-seg-used-text="{{ row.seg_used_text }}"
+            data-seg-cap-text="{{ row.seg_cap_text }}"
+            data-sort-node-key="{{ row.node_key }}"
+            data-sort-member-id="{{ row.member_id }}"
+            data-sort-role="{{ row.role_rank }}"
+            data-sort-start-time="{{ row.node_start_time }}"
+            data-sort-cpu="{{ row.cpu_sort }}"
+            data-sort-mem-used="{{ row.mem_used_sort }}"
+            data-sort-rss="{{ row.rss_sort }}"
+            data-sort-tx="{{ row.tx_sort }}"
+            data-sort-rx="{{ row.rx_sort }}"
+            data-sort-put-rps="{{ row.put_rps_sort }}"
+            data-sort-get-rps="{{ row.get_rps_sort }}"
+            data-sort-put-avg="{{ row.put_avg_sort }}"
+            data-sort-get-avg="{{ row.get_avg_sort }}"
+            data-sort-seg-used="{{ row.seg_used_sort }}"
+            data-sort-seg-cap="{{ row.seg_cap_sort }}">
+	            <td data-col="node_key" class="mono">{{ row.node_key }}</td>
+	            <td data-col="member_id" class="mono">{{ row.member_id }}</td>
+	            <td data-col="logs" class="mono"><a href="{{ row.logs_href }}" target="_blank">log</a></td>
+	            <td data-col="role" class="mono">{{ row.role_text }}</td>
+		            <td data-col="pid" class="mono">{{ row.pid_text }}</td>
+		            <td data-col="cmd" class="mono">{{ row.cmd_text }}</td>
+	            <td data-col="start_time">
+	              <div class="cell">
+	                <span class="mono">{{ row.node_start_time }}</span>
+	                <span class="muted tiny local-time" data-epoch="{{ row.node_start_time }}"></span>
+	              </div>
+	            </td>
+		            <td data-col="hostname" class="mono">{{ row.hostname_text }}</td>
+		            <td data-col="accessible_ip" class="mono">{{ row.accessible_ip_text }}</td>
+		            <td data-col="shared_mem_dir" class="mono">{{ row.shared_mem_dir_text }}</td>
+		            <td data-col="p2p_listen_port" class="mono">{{ row.p2p_listen_port_text }}</td>
+              {% if header.member_kind_query == "kv" %}
+              <td data-col="rdma">
+                <div class="cell">
+                  <span class="mono">{{ row.rdma_text }}</span>
+                </div>
+              </td>
+              {% endif %}
+	            <td data-col="cpu" class="mono">{{ row.cpu_text }}</td>
+	            <td data-col="mem_used" class="mono">{{ row.mem_used_text }}</td>
+	            <td data-col="rss" class="mono">{{ row.rss_text }}</td>
+	            <td data-col="tx" class="mono">{{ row.tx_text }}</td>
+	            <td data-col="rx" class="mono">{{ row.rx_text }}</td>
+	            <td data-col="put_rps" class="mono">{{ row.put_rps_text }}</td>
+	            <td data-col="get_rps" class="mono">{{ row.get_rps_text }}</td>
+	            <td data-col="put_avg" class="mono">{{ row.put_avg_text }}</td>
+	            <td data-col="get_avg" class="mono">{{ row.get_avg_text }}</td>
+	            <td data-col="seg_used" class="mono">{{ row.seg_used_text }}</td>
+	            <td data-col="seg_cap" class="mono">{{ row.seg_cap_text }}</td>
+	          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if owner_seg.owner_rows.len() > 0 %}
+    <details class="card" open data-state-key="owner_segments">
+      <summary><b>Owner segment usage</b></summary>
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th>owner_id</th>
+              <th>total_used</th>
+              <th>total_cap</th>
+              <th>total_util</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for o in owner_seg.owner_rows %}
+              <tr>
+                <td class="mono">{{ o.owner_id }}</td>
+                <td class="mono">{{ o.total_used }}</td>
+                <td class="mono">{{ o.total_cap }}</td>
+                <td class="mono">{{ o.total_util }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="row muted tiny">Device breakdown</div>
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th>owner_id</th>
+              <th>device</th>
+              <th>used</th>
+              <th>cap</th>
+              <th>util</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for d in owner_seg.device_rows %}
+              <tr>
+                <td class="mono">{{ d.owner_id }}</td>
+                <td class="mono">{{ d.device }}</td>
+                <td class="mono">{{ d.used }}</td>
+                <td class="mono">{{ d.cap }}</td>
+                <td class="mono">{{ d.util }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  {% endif %}
+
+  {% if warnings.len() > 0 %}
+    <div class="warn">
+      <div><b>Warnings</b></div>
+      {% for w in warnings %}
+        <div class="mono">- {{ w }}</div>
+      {% endfor %}
+    </div>
+  {% endif %}
+</div>
+
+{% if header.member_kind_query == "kv" %}
+  <details class="card" open data-state-key="kvclient_warn_error_tail" style="margin: 12px 0;">
+    <summary><b>KVClient WARN+ERROR tail</b> <span class="muted">(real-time, instance_key tagged)</span></summary>
+    <div class="muted tiny" style="margin: 6px 0 10px 0;">
+      This view tails WARN/ERROR logs from GreptimeDB. Instance key is the fluxon_member_id tag.
+    </div>
+    <div class="kvlog_wrap">
+      <div>
+        <div class="row">
+          <b>master</b>
+          <span class="muted">|</span>
+          <a class="mono" href="/logs?cluster_name={{ header.cluster_name_encoded }}&member_kind={{ header.member_kind_query }}&role=master&level=warn" target="_blank">open</a>
+        </div>
+        <div id="kv_master_tail_stats" class="muted tiny"></div>
+        <div id="kv_master_tail_err" class="bad tiny"></div>
+        <div id="kv_master_tail_box" class="kvlog_box mono"></div>
+      </div>
+      <div>
+        <div class="row">
+          <b>owner_client</b>
+          <span class="muted">|</span>
+          <a class="mono" href="/logs?cluster_name={{ header.cluster_name_encoded }}&member_kind={{ header.member_kind_query }}&role=owner_client&level=warn" target="_blank">open</a>
+        </div>
+        <div id="kv_owner_tail_stats" class="muted tiny"></div>
+        <div id="kv_owner_tail_err" class="bad tiny"></div>
+        <div id="kv_owner_tail_box" class="kvlog_box mono"></div>
+      </div>
+      <div>
+        <div class="row">
+          <b>external_client</b>
+          <span class="muted">|</span>
+          <a class="mono" href="/logs?cluster_name={{ header.cluster_name_encoded }}&member_kind={{ header.member_kind_query }}&role=external_client&level=warn" target="_blank">open</a>
+        </div>
+        <div id="kv_external_tail_stats" class="muted tiny"></div>
+        <div id="kv_external_tail_err" class="bad tiny"></div>
+        <div id="kv_external_tail_box" class="kvlog_box mono"></div>
+      </div>
+      <div>
+        <div class="row">
+          <b>side_transfer_worker</b>
+          <span class="muted">|</span>
+          <a class="mono" href="/logs?cluster_name={{ header.cluster_name_encoded }}&member_kind={{ header.member_kind_query }}&role=side_transfer_worker&level=warn" target="_blank">open</a>
+        </div>
+        <div id="kv_side_tail_stats" class="muted tiny"></div>
+        <div id="kv_side_tail_err" class="bad tiny"></div>
+        <div id="kv_side_tail_box" class="kvlog_box mono"></div>
+      </div>
+    </div>
+  </details>
+
+  <script>
+  (() => {
+    const clusterName = '{{ header.cluster_name }}';
+    const memberKind = '{{ header.member_kind_query }}';
+
+    const TAIL_INTERVAL_MS = 2000;
+    const MAX_LINES = 800;
+    const BOTTOM_THRESHOLD_PX = 50;
+    // Fixed window (10 minutes) requested by user for WARN+ERROR stats.
+    // Keep it explicit to avoid hidden defaults and ambiguous semantics.
+    const WARN_ERROR_WINDOW_SECS = 10 * 60;
+    const NS_PER_SEC = 1000000000n;
+    const NS_PER_MS = 1000000n;
+
+    const normalizeLevel = (s) => {
+      if (!s) return null;
+      const v = String(s).trim().toUpperCase();
+      if (v === 'TRACE' || v === 'DEBUG' || v === 'INFO' || v === 'WARN' || v === 'ERROR') return v;
+      return null;
+    };
+
+    const nowNs = () => BigInt(Date.now()) * NS_PER_MS;
+
+    const fmtAge = (deltaNs) => {
+      if (deltaNs === null) return '-';
+      if (deltaNs < 0n) return '0s';
+      const s = Number(deltaNs / NS_PER_SEC);
+      if (s < 60) return String(s) + 's';
+      const m = Math.floor(s / 60);
+      const ss = s % 60;
+      if (m < 60) return String(m) + 'm' + String(ss) + 's';
+      const h = Math.floor(m / 60);
+      const mm = m % 60;
+      return String(h) + 'h' + String(mm) + 'm';
+    };
+
+    const pillClassForLevel = (lvl) => {
+      switch (lvl) {
+        case 'TRACE': return 'kvlog_pill kvlog_pill_trace';
+        case 'DEBUG': return 'kvlog_pill kvlog_pill_debug';
+        case 'INFO': return 'kvlog_pill kvlog_pill_info';
+        case 'WARN': return 'kvlog_pill kvlog_pill_warn';
+        case 'ERROR': return 'kvlog_pill kvlog_pill_error';
+        default: return 'kvlog_pill';
+      }
+    };
+
+    const parseBodyForHighlight = (raw) => {
+      const s = String(raw || '');
+      const sp = s.indexOf(' ');
+      if (sp <= 0) return { lvl: null, target: null, loc: null, msg: s };
+      const lvl = normalizeLevel(s.slice(0, sp));
+      const rest0 = (lvl ? s.slice(sp + 1) : s);
+      const colon = rest0.indexOf(': ');
+      const head = colon >= 0 ? rest0.slice(0, colon) : rest0;
+      const msg = colon >= 0 ? rest0.slice(colon + 2) : '';
+      let target = head;
+      let loc = null;
+      const lp = head.indexOf(' (');
+      if (lp >= 0 && head.endsWith(')')) {
+        target = head.slice(0, lp);
+        loc = head.slice(lp + 1).trim();
+      }
+      return { lvl, target, loc, msg };
+    };
+
+    const isNearBottom = (box) => {
+      const d = box.scrollHeight - (box.scrollTop + box.clientHeight);
+      return d <= BOTTOM_THRESHOLD_PX;
+    };
+
+    const appendItems = (box, items, stickToBottom) => {
+      const frag = document.createDocumentFragment();
+      for (const it of items) {
+        const div = document.createElement('div');
+        div.className = 'kvlog_line mono';
+
+        const ts = document.createElement('span');
+        ts.className = 'kvlog_ts';
+        ts.textContent = '[' + String(it.ts) + '] ';
+        div.appendChild(ts);
+
+        if (it.member_id && String(it.member_id).length > 0) {
+          const mid = document.createElement('span');
+          mid.className = 'kvlog_member';
+          mid.textContent = String(it.member_id);
+          div.appendChild(mid);
+          div.appendChild(document.createTextNode(' '));
+        }
+
+        const parts = parseBodyForHighlight(it.body);
+        const lvl = normalizeLevel(it.severity_text) || parts.lvl;
+        if (lvl) {
+          const pill = document.createElement('span');
+          pill.className = pillClassForLevel(lvl);
+          pill.textContent = lvl;
+          div.appendChild(pill);
+          div.appendChild(document.createTextNode(' '));
+        }
+
+        let rest = String(it.body || '');
+        if (lvl && rest.startsWith(lvl + ' ')) {
+          rest = rest.slice(lvl.length + 1);
+        }
+        const hl = parseBodyForHighlight((lvl ? (lvl + ' ' + rest) : rest));
+        if (hl.target) {
+          const t = document.createElement('span');
+          t.className = 'kvlog_target';
+          t.textContent = hl.target;
+          div.appendChild(t);
+        } else {
+          div.appendChild(document.createTextNode(rest));
+          frag.appendChild(div);
+          continue;
+        }
+        if (hl.loc) {
+          div.appendChild(document.createTextNode(' '));
+          const loc = document.createElement('span');
+          loc.className = 'kvlog_loc';
+          loc.textContent = hl.loc;
+          div.appendChild(loc);
+        }
+        if (hl.msg && hl.msg.length > 0) {
+          div.appendChild(document.createTextNode(': ' + hl.msg));
+        }
+
+        frag.appendChild(div);
+      }
+      box.appendChild(frag);
+
+      while (box.childNodes.length > MAX_LINES) {
+        box.removeChild(box.firstChild);
+      }
+      if (stickToBottom) {
+        box.scrollTop = box.scrollHeight;
+      }
+    };
+
+    const mkTailer = (role, boxId, errId, statsId) => {
+      const box = document.getElementById(boxId);
+      const err = document.getElementById(errId);
+      const stats = document.getElementById(statsId);
+      if (!box || !err || !stats) return null;
+
+      let newestTs = null;
+      let loading = false;
+      let newestTsNs = null;
+      let recentTsNs = [];
+      let recentHead = 0;
+
+      const buildUrl = (mode) => {
+        const p = new URLSearchParams();
+        p.set('cluster_name', clusterName);
+        p.set('member_kind', memberKind);
+        p.set('role', role);
+        p.set('level', 'warn');
+        if (mode === 'tail' && newestTs !== null) {
+          p.set('after_ts', String(newestTs));
+        }
+        return '/api/logs?' + p.toString();
+      };
+
+      const recordRecent = (itemsAsc) => {
+        // KV tail uses level=warn (WARN+ERROR) so we can treat every returned item as counted.
+        for (const it of itemsAsc) {
+          const ts = String(it.ts || '');
+          if (ts.length === 0) continue;
+          recentTsNs.push(BigInt(ts));
+        }
+      };
+
+      const renderStats = () => {
+        if (newestTsNs === null) {
+          stats.textContent = '';
+          return;
+        }
+        const now = nowNs();
+        const windowStart = now - BigInt(WARN_ERROR_WINDOW_SECS) * NS_PER_SEC;
+        // Advance head instead of shifting to avoid O(n^2) when log volume is high.
+        while (recentHead < recentTsNs.length && recentTsNs[recentHead] < windowStart) {
+          recentHead += 1;
+        }
+        if (recentHead > 0 && recentHead >= 1024) {
+          recentTsNs = recentTsNs.slice(recentHead);
+          recentHead = 0;
+        }
+        const cnt10m = recentTsNs.length - recentHead;
+        const perMin = (cnt10m / (WARN_ERROR_WINDOW_SECS / 60)).toFixed(1);
+        const age = fmtAge(now - newestTsNs);
+        stats.textContent = `last: ${age} | 10m: ${cnt10m} (~${perMin}/min)`;
+      };
+
+      const loadLatest = async () => {
+        if (loading) return;
+        loading = true;
+        err.textContent = '';
+        stats.textContent = 'loading...';
+        try {
+          const resp = await fetch(buildUrl('latest'), { cache: 'no-store' });
+          const text = await resp.text();
+          if (!resp.ok) {
+            err.textContent = text;
+            return;
+          }
+          const data = JSON.parse(text);
+          const items = (data && data.items) ? data.items : [];
+          if (items.length === 0) {
+            stats.textContent = '';
+            return;
+          }
+
+          // Latest API returns DESC order; display ASC.
+          const asc = items.slice().reverse();
+          box.innerHTML = '';
+          appendItems(box, asc, true);
+          newestTs = asc[asc.length - 1].ts;
+          newestTsNs = BigInt(String(newestTs));
+          recentTsNs = [];
+          recentHead = 0;
+          recordRecent(asc);
+          renderStats();
+        } catch (e) {
+          err.textContent = String(e);
+        } finally {
+          loading = false;
+        }
+      };
+
+      const tailOnce = async () => {
+        if (loading) return;
+        if (newestTs === null) return;
+        const stick = isNearBottom(box);
+        if (!stick) return;
+        loading = true;
+        err.textContent = '';
+        try {
+          const resp = await fetch(buildUrl('tail'), { cache: 'no-store' });
+          const text = await resp.text();
+          if (!resp.ok) {
+            err.textContent = text;
+            return;
+          }
+          const data = JSON.parse(text);
+          const items = (data && data.items) ? data.items : [];
+          if (items.length === 0) return;
+
+          // Tail API returns ASC order.
+          appendItems(box, items, true);
+          newestTs = items[items.length - 1].ts;
+          newestTsNs = BigInt(String(newestTs));
+          recordRecent(items);
+          renderStats();
+        } catch (e) {
+          err.textContent = String(e);
+        } finally {
+          loading = false;
+        }
+      };
+
+      return {
+        start: async () => {
+          await loadLatest();
+          setInterval(tailOnce, TAIL_INTERVAL_MS);
+          setInterval(renderStats, 1000);
+        },
+      };
+    };
+
+    const t1 = mkTailer('owner_client', 'kv_owner_tail_box', 'kv_owner_tail_err', 'kv_owner_tail_stats');
+    const t2 = mkTailer('external_client', 'kv_external_tail_box', 'kv_external_tail_err', 'kv_external_tail_stats');
+    const t3 = mkTailer('side_transfer_worker', 'kv_side_tail_box', 'kv_side_tail_err', 'kv_side_tail_stats');
+    const t0 = mkTailer('master', 'kv_master_tail_box', 'kv_master_tail_err', 'kv_master_tail_stats');
+    if (t0) t0.start();
+    if (t1) t1.start();
+    if (t2) t2.start();
+    if (t3) t3.start();
+  })();
+  </script>
+{% endif %}
+
+<script>
+(function () {
+  const refreshSecs = {{ refresh_secs }};
+  const clusterName = '{{ header.cluster_name }}';
+  const memberKind = '{{ header.member_kind_query }}';
+
+  const storageKey = 'fluxon_cli.table_state.v2:' + '{{ header.cluster_name_encoded }}' + ':' + '{{ header.member_kind_query }}';
+  const metricStorageKey = 'fluxon_cli.metric_panel.v1:' + '{{ header.cluster_name_encoded }}';
+
+  const ALL_COLS = [
+    'node_key','member_id','role','pid','cmd','start_time','hostname','accessible_ip','shared_mem_dir','p2p_listen_port',
+    'rdma','cpu','mem_used','rss','tx','rx','put_rps','get_rps','put_avg','get_avg','seg_used','seg_cap',
+  ];
+
+  function requireEl(id) {
+    const el = document.getElementById(id);
+    if (!el) {
+      console.warn('missing element', id);
+    }
+    return el;
+  }
+
+  function getText(v) {
+    return (v || '').toString().trim().toLowerCase();
+  }
+
+  function parseI64WithErr(s) {
+    const t = (s || '').toString().trim();
+    if (t === '') return { n: null, err: '' };
+    const n = Number(t);
+    if (!Number.isFinite(n)) return { n: null, err: 'invalid integer: ' + t };
+    return { n: Math.trunc(n), err: '' };
+  }
+
+  function getSelectedValues(selectEl) {
+    if (!selectEl) return [];
+    const out = [];
+    for (const opt of Array.from(selectEl.options)) {
+      if (opt.selected) out.push(opt.value);
+    }
+    return out;
+  }
+
+  function setSelectedValues(selectEl, values) {
+    if (!selectEl) return;
+    const s = new Set(values || []);
+    for (const opt of Array.from(selectEl.options)) {
+      opt.selected = s.has(opt.value);
+    }
+  }
+
+  function captureFilters() {
+    const roleSel = requireEl('f_role');
+    const filterSpec = {
+      node_key: requireEl('f_node_key')?.value || '',
+      member_id: requireEl('f_member_id')?.value || '',
+      role: getSelectedValues(roleSel),
+      pid: requireEl('f_pid')?.value || '',
+      cmd: requireEl('f_cmd')?.value || '',
+      start_time_min: requireEl('f_start_time_min')?.value || '',
+      start_time_max: requireEl('f_start_time_max')?.value || '',
+      hostname: requireEl('f_hostname')?.value || '',
+      accessible_ip: requireEl('f_accessible_ip')?.value || '',
+      shared_mem_dir: requireEl('f_shared_mem_dir')?.value || '',
+      p2p_listen_port: requireEl('f_p2p_listen_port')?.value || '',
+      cpu: requireEl('f_cpu')?.value || '',
+      mem_used: requireEl('f_mem_used')?.value || '',
+      rss: requireEl('f_rss')?.value || '',
+      tx: requireEl('f_tx')?.value || '',
+      rx: requireEl('f_rx')?.value || '',
+      put_rps: requireEl('f_put_rps')?.value || '',
+      get_rps: requireEl('f_get_rps')?.value || '',
+      put_avg: requireEl('f_put_avg')?.value || '',
+      get_avg: requireEl('f_get_avg')?.value || '',
+      seg_used: requireEl('f_seg_used')?.value || '',
+      seg_cap: requireEl('f_seg_cap')?.value || '',
+    };
+    return filterSpec;
+  }
+
+  function captureSortLevels() {
+    const out = [];
+    for (const i of [1, 2, 3, 4]) {
+      const key = requireEl('sort_' + i + '_key')?.value || 'none';
+      const dir = requireEl('sort_' + i + '_dir')?.value || 'asc';
+      out.push({ key, dir });
+    }
+    return out;
+  }
+
+  function captureVisibleCols() {
+    const out = [];
+    document.querySelectorAll('#app input.col_toggle').forEach((el) => {
+      if (el instanceof HTMLInputElement && el.checked) {
+        out.push(el.value);
+      }
+    });
+    return out;
+  }
+
+  function captureTableState() {
+    return {
+      filters: captureFilters(),
+      sort: captureSortLevels(),
+      visible_cols: captureVisibleCols(),
+    };
+  }
+
+  function restoreFilters(spec) {
+    if (!spec) return;
+    const roleSel = requireEl('f_role');
+    if (requireEl('f_node_key')) requireEl('f_node_key').value = spec.node_key || '';
+    if (requireEl('f_member_id')) requireEl('f_member_id').value = spec.member_id || '';
+    setSelectedValues(roleSel, spec.role || []);
+    if (requireEl('f_pid')) requireEl('f_pid').value = spec.pid || '';
+    if (requireEl('f_cmd')) requireEl('f_cmd').value = spec.cmd || '';
+    if (requireEl('f_start_time_min')) requireEl('f_start_time_min').value = spec.start_time_min || '';
+    if (requireEl('f_start_time_max')) requireEl('f_start_time_max').value = spec.start_time_max || '';
+    if (requireEl('f_hostname')) requireEl('f_hostname').value = spec.hostname || '';
+    if (requireEl('f_accessible_ip')) requireEl('f_accessible_ip').value = spec.accessible_ip || '';
+    if (requireEl('f_shared_mem_dir')) requireEl('f_shared_mem_dir').value = spec.shared_mem_dir || '';
+    if (requireEl('f_p2p_listen_port')) requireEl('f_p2p_listen_port').value = spec.p2p_listen_port || '';
+    if (requireEl('f_cpu')) requireEl('f_cpu').value = spec.cpu || '';
+    if (requireEl('f_mem_used')) requireEl('f_mem_used').value = spec.mem_used || '';
+    if (requireEl('f_rss')) requireEl('f_rss').value = spec.rss || '';
+    if (requireEl('f_tx')) requireEl('f_tx').value = spec.tx || '';
+    if (requireEl('f_rx')) requireEl('f_rx').value = spec.rx || '';
+    if (requireEl('f_put_rps')) requireEl('f_put_rps').value = spec.put_rps || '';
+    if (requireEl('f_get_rps')) requireEl('f_get_rps').value = spec.get_rps || '';
+    if (requireEl('f_put_avg')) requireEl('f_put_avg').value = spec.put_avg || '';
+    if (requireEl('f_get_avg')) requireEl('f_get_avg').value = spec.get_avg || '';
+    if (requireEl('f_seg_used')) requireEl('f_seg_used').value = spec.seg_used || '';
+    if (requireEl('f_seg_cap')) requireEl('f_seg_cap').value = spec.seg_cap || '';
+  }
+
+  function restoreSortLevels(levels) {
+    if (!levels) return;
+    for (let i = 1; i <= 4; i += 1) {
+      const v = levels[i - 1];
+      if (!v) continue;
+      const keyEl = requireEl('sort_' + i + '_key');
+      const dirEl = requireEl('sort_' + i + '_dir');
+      if (keyEl) keyEl.value = v.key || 'none';
+      if (dirEl) dirEl.value = v.dir || 'asc';
+    }
+  }
+
+  function restoreVisibleCols(cols) {
+    if (!Array.isArray(cols)) return;
+    const s = new Set(cols);
+    document.querySelectorAll('#app input.col_toggle').forEach((el) => {
+      if (!(el instanceof HTMLInputElement)) return;
+      el.checked = s.has(el.value);
+    });
+  }
+
+  function restoreTableState(state) {
+    if (!state) return;
+    restoreFilters(state.filters);
+    restoreSortLevels(state.sort);
+    restoreVisibleCols(state.visible_cols);
+  }
+
+  function saveTableStateToLocalStorage() {
+    try {
+      const spec = captureTableState();
+      localStorage.setItem(storageKey, JSON.stringify(spec));
+    } catch (e) {
+      console.warn('localStorage save failed', e);
+    }
+  }
+
+  function loadTableStateFromLocalStorage() {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch (e) {
+      console.warn('localStorage load failed', e);
+      return null;
+    }
+  }
+
+  function saveMetricStateToLocalStorage(state) {
+    try {
+      localStorage.setItem(metricStorageKey, JSON.stringify(state || {}));
+    } catch (e) {
+      console.warn('metric localStorage save failed', e);
+    }
+  }
+
+  function loadMetricStateFromLocalStorage() {
+    try {
+      const raw = localStorage.getItem(metricStorageKey);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch (e) {
+      console.warn('metric localStorage load failed', e);
+      return null;
+    }
+  }
+
+  function updateSortRowsVisibility() {
+    const k1 = requireEl('sort_1_key')?.value || 'none';
+    const k2 = requireEl('sort_2_key')?.value || 'none';
+    const k3 = requireEl('sort_3_key')?.value || 'none';
+
+    const row2 = requireEl('sort_2_row');
+    const row3 = requireEl('sort_3_row');
+    const row4 = requireEl('sort_4_row');
+
+    const show2 = k1 !== 'none';
+    const show3 = show2 && k2 !== 'none';
+    const show4 = show3 && k3 !== 'none';
+
+    if (row2) row2.style.display = show2 ? '' : 'none';
+    if (row3) row3.style.display = show3 ? '' : 'none';
+    if (row4) row4.style.display = show4 ? '' : 'none';
+
+    // If an upper sort level is disabled, lower levels are meaningless. Clear them to avoid hidden state.
+    if (!show2) {
+      if (requireEl('sort_2_key')) requireEl('sort_2_key').value = 'none';
+      if (requireEl('sort_2_dir')) requireEl('sort_2_dir').value = 'asc';
+      if (requireEl('sort_3_key')) requireEl('sort_3_key').value = 'none';
+      if (requireEl('sort_3_dir')) requireEl('sort_3_dir').value = 'asc';
+      if (requireEl('sort_4_key')) requireEl('sort_4_key').value = 'none';
+      if (requireEl('sort_4_dir')) requireEl('sort_4_dir').value = 'asc';
+    } else if (!show3) {
+      if (requireEl('sort_3_key')) requireEl('sort_3_key').value = 'none';
+      if (requireEl('sort_3_dir')) requireEl('sort_3_dir').value = 'asc';
+      if (requireEl('sort_4_key')) requireEl('sort_4_key').value = 'none';
+      if (requireEl('sort_4_dir')) requireEl('sort_4_dir').value = 'asc';
+    } else if (!show4) {
+      if (requireEl('sort_4_key')) requireEl('sort_4_key').value = 'none';
+      if (requireEl('sort_4_dir')) requireEl('sort_4_dir').value = 'asc';
+    }
+  }
+
+  function applyVisibleCols(cols) {
+    const set = new Set(cols || []);
+    document.querySelectorAll('#app [data-col]').forEach((el) => {
+      const col = el.getAttribute('data-col');
+      if (!col) return;
+      el.style.display = set.has(col) ? '' : 'none';
+    });
+  }
+
+  function captureState() {
+    return {
+      table: captureTableState(),
+      details: (() => {
+        const m = {};
+        document.querySelectorAll('#app details[data-state-key]').forEach((d) => {
+          const k = d.getAttribute('data-state-key');
+          if (!k) return;
+          m[k] = !!d.open;
+        });
+        return m;
+      })(),
+      metric_dom: captureMetricDomState(),
+    };
+  }
+
+  function restoreState(state) {
+    if (!state) return;
+    restoreTableState(state.table);
+    const details = state.details || {};
+    document.querySelectorAll('#app details[data-state-key]').forEach((d) => {
+      const k = d.getAttribute('data-state-key');
+      if (!k) return;
+      if (Object.prototype.hasOwnProperty.call(details, k)) {
+        d.open = !!details[k];
+      }
+    });
+    restoreMetricDomState(state.metric_dom);
+    updateSortRowsVisibility();
+  }
+
+  function captureMetricDomState() {
+    if (memberKind !== 'kv') return null;
+    return {
+      metric_grid_html: requireEl('metric_grid')?.innerHTML || '',
+      metric_panel_status_text: requireEl('metric_panel_status')?.textContent || '',
+      metric_panel_warn_html: requireEl('metric_panel_warn')?.innerHTML || '',
+      member_section_display: requireEl('member_metric_section')?.style.display || '',
+      member_title_text: requireEl('member_metric_title')?.textContent || '',
+      member_subtitle_text: requireEl('member_metric_subtitle')?.textContent || '',
+      member_status_text: requireEl('member_metric_status')?.textContent || '',
+      member_warn_html: requireEl('member_metric_warn')?.innerHTML || '',
+      member_grid_html: requireEl('member_metric_grid')?.innerHTML || '',
+      member_toggle_display: requireEl('member_metric_toggle_btn')?.style.display || '',
+      member_toggle_text: requireEl('member_metric_toggle_btn')?.textContent || '',
+    };
+  }
+
+  function restoreMetricDomState(state) {
+    if (!state || memberKind !== 'kv') return;
+    const metricGrid = requireEl('metric_grid');
+    const metricStatus = requireEl('metric_panel_status');
+    const metricWarn = requireEl('metric_panel_warn');
+    const memberSection = requireEl('member_metric_section');
+    const memberTitle = requireEl('member_metric_title');
+    const memberSubtitle = requireEl('member_metric_subtitle');
+    const memberStatus = requireEl('member_metric_status');
+    const memberWarn = requireEl('member_metric_warn');
+    const memberGrid = requireEl('member_metric_grid');
+    const memberToggleBtn = requireEl('member_metric_toggle_btn');
+    if (metricGrid) metricGrid.innerHTML = state.metric_grid_html || '';
+    if (metricStatus) metricStatus.textContent = state.metric_panel_status_text || '';
+    if (metricWarn) metricWarn.innerHTML = state.metric_panel_warn_html || '';
+    if (memberSection) memberSection.style.display = state.member_section_display || 'none';
+    if (memberTitle) memberTitle.textContent = state.member_title_text || 'Member Metric';
+    if (memberSubtitle) memberSubtitle.textContent = state.member_subtitle_text || '';
+    if (memberStatus) memberStatus.textContent = state.member_status_text || '';
+    if (memberWarn) memberWarn.innerHTML = state.member_warn_html || '';
+    if (memberGrid) memberGrid.innerHTML = state.member_grid_html || '';
+    if (memberToggleBtn) {
+      memberToggleBtn.style.display = state.member_toggle_display || 'none';
+      memberToggleBtn.textContent = state.member_toggle_text || 'Show all';
+    }
+  }
+
+  function compareValues(avRaw, bvRaw) {
+    const av = avRaw ?? '';
+    const bv = bvRaw ?? '';
+    const an = (av === '') ? Number.NaN : Number(av);
+    const bn = (bv === '') ? Number.NaN : Number(bv);
+    if (!Number.isNaN(an) && !Number.isNaN(bn)) {
+      return an === bn ? 0 : (an < bn ? -1 : 1);
+    }
+    return String(av).localeCompare(String(bv));
+  }
+
+  function compareBySortLevels(a, b, levels) {
+    for (const lv of levels) {
+      const keyAttr = 'data-sort-' + lv.key.replaceAll('_', '-');
+      const av = a.getAttribute(keyAttr);
+      const bv = b.getAttribute(keyAttr);
+      const cmp = compareValues(av, bv);
+      if (cmp !== 0) {
+        return lv.dir === 'desc' ? -cmp : cmp;
+      }
+    }
+    return 0;
+  }
+
+  function applyFilter() {
+    const body = requireEl('member_rows');
+    if (!body) return;
+
+    const tableState = captureTableState();
+    const spec = tableState.filters;
+    applyVisibleCols(tableState.visible_cols);
+
+    const sortLevels = (tableState.sort || []).filter((v) => v && v.key && v.key !== 'none');
+    const roleSet = new Set(spec.role || []);
+    const minParsed = parseI64WithErr(spec.start_time_min);
+    const maxParsed = parseI64WithErr(spec.start_time_max);
+    const startMin = minParsed.n;
+    const startMax = maxParsed.n;
+    const errEl = requireEl('filter_err');
+    if (errEl) {
+      const errs = [];
+      if (minParsed.err) errs.push('start_time_min: ' + minParsed.err);
+      if (maxParsed.err) errs.push('start_time_max: ' + maxParsed.err);
+      if (!minParsed.err && !maxParsed.err && startMin !== null && startMax !== null && startMin > startMax) {
+        errs.push('start_time_range: min > max');
+      }
+      errEl.textContent = errs.join(' | ');
+      errEl.className = errs.length > 0 ? 'bad tiny' : 'muted tiny';
+    }
+    const rows = Array.from(body.querySelectorAll('tr'));
+
+    for (const r of rows) {
+      const ok =
+        (getText(spec.node_key) === '' || getText(r.getAttribute('data-node-key')).includes(getText(spec.node_key))) &&
+        (getText(spec.member_id) === '' || getText(r.getAttribute('data-member-id')).includes(getText(spec.member_id))) &&
+        (roleSet.size === 0 || roleSet.has((r.getAttribute('data-role') || '').toString())) &&
+        (getText(spec.pid) === '' || getText(r.getAttribute('data-pid')).includes(getText(spec.pid))) &&
+        (getText(spec.cmd) === '' || getText(r.getAttribute('data-cmd')).includes(getText(spec.cmd))) &&
+        (getText(spec.hostname) === '' || getText(r.getAttribute('data-hostname')).includes(getText(spec.hostname))) &&
+        (getText(spec.accessible_ip) === '' || getText(r.getAttribute('data-accessible-ip')).includes(getText(spec.accessible_ip))) &&
+        (getText(spec.shared_mem_dir) === '' || getText(r.getAttribute('data-shared-mem-dir')).includes(getText(spec.shared_mem_dir))) &&
+        (getText(spec.p2p_listen_port) === '' || getText(r.getAttribute('data-p2p-listen-port')).includes(getText(spec.p2p_listen_port))) &&
+        (getText(spec.cpu) === '' || getText(r.getAttribute('data-cpu-text')).includes(getText(spec.cpu))) &&
+        (getText(spec.mem_used) === '' || getText(r.getAttribute('data-mem-used-text')).includes(getText(spec.mem_used))) &&
+        (getText(spec.rss) === '' || getText(r.getAttribute('data-rss-text')).includes(getText(spec.rss))) &&
+        (getText(spec.tx) === '' || getText(r.getAttribute('data-tx-text')).includes(getText(spec.tx))) &&
+        (getText(spec.rx) === '' || getText(r.getAttribute('data-rx-text')).includes(getText(spec.rx))) &&
+        (getText(spec.put_rps) === '' || getText(r.getAttribute('data-put-rps-text')).includes(getText(spec.put_rps))) &&
+        (getText(spec.get_rps) === '' || getText(r.getAttribute('data-get-rps-text')).includes(getText(spec.get_rps))) &&
+        (getText(spec.put_avg) === '' || getText(r.getAttribute('data-put-avg-text')).includes(getText(spec.put_avg))) &&
+        (getText(spec.get_avg) === '' || getText(r.getAttribute('data-get-avg-text')).includes(getText(spec.get_avg))) &&
+        (getText(spec.seg_used) === '' || getText(r.getAttribute('data-seg-used-text')).includes(getText(spec.seg_used))) &&
+        (getText(spec.seg_cap) === '' || getText(r.getAttribute('data-seg-cap-text')).includes(getText(spec.seg_cap))) &&
+        (startMin === null || Number(r.getAttribute('data-start-time')) >= startMin) &&
+        (startMax === null || Number(r.getAttribute('data-start-time')) <= startMax);
+      r.style.display = ok ? '' : 'none';
+    }
+
+    saveTableStateToLocalStorage();
+    if (sortLevels.length === 0) return;
+
+    const visibleRows = rows.filter((r) => r.style.display !== 'none');
+    visibleRows.sort((a, b) => compareBySortLevels(a, b, sortLevels));
+    for (const r of visibleRows) {
+      body.appendChild(r);
+    }
+  }
+
+  function clearFilter() {
+    const ids = [
+      'f_node_key','f_member_id','f_pid','f_cmd','f_start_time_min','f_start_time_max','f_hostname','f_accessible_ip','f_shared_mem_dir','f_p2p_listen_port',
+      'f_cpu','f_mem_used','f_rss','f_tx','f_rx','f_put_rps','f_get_rps','f_put_avg','f_get_avg','f_seg_used','f_seg_cap',
+    ];
+    for (const id of ids) {
+      const el = requireEl(id);
+      if (el) el.value = '';
+    }
+    setSelectedValues(requireEl('f_role'), []);
+    for (const i of [1, 2, 3, 4]) {
+      if (requireEl('sort_' + i + '_key')) requireEl('sort_' + i + '_key').value = 'none';
+      if (requireEl('sort_' + i + '_dir')) requireEl('sort_' + i + '_dir').value = 'asc';
+    }
+    document.querySelectorAll('#app input.col_toggle').forEach((el) => {
+      if (!(el instanceof HTMLInputElement)) return;
+      el.checked = true;
+    });
+    updateSortRowsVisibility();
+    applyFilter();
+  }
+
+  function wireUiHandlers() {
+    // Note: `#app` is replaced by auto-refresh, so listeners must be re-wired after each refresh.
+    const clearBtn = requireEl('clear_filter');
+    if (clearBtn) clearBtn.addEventListener('click', clearFilter);
+
+    // Immediate UI response: filter runs on local data only.
+    const inputIds = [
+      'f_node_key','f_member_id','f_pid','f_cmd','f_start_time_min','f_start_time_max','f_hostname','f_accessible_ip','f_shared_mem_dir','f_p2p_listen_port',
+      'f_cpu','f_mem_used','f_rss','f_tx','f_rx','f_put_rps','f_get_rps','f_put_avg','f_get_avg','f_seg_used','f_seg_cap',
+    ];
+    for (const id of inputIds) {
+      const el = requireEl(id);
+      if (!el) continue;
+      el.addEventListener('input', applyFilter);
+    }
+    const roleSel = requireEl('f_role');
+    if (roleSel) roleSel.addEventListener('change', () => {
+      applyFilter();
+      if (memberKind === 'kv') {
+        loadMetricPanel();
+      }
+    });
+
+    document.querySelectorAll('#app input.col_toggle').forEach((el) => {
+      if (!(el instanceof HTMLInputElement)) return;
+      el.addEventListener('change', applyFilter);
+    });
+
+    for (const i of [1, 2, 3, 4]) {
+      const keyEl = requireEl('sort_' + i + '_key');
+      const dirEl = requireEl('sort_' + i + '_dir');
+      if (keyEl) {
+        keyEl.addEventListener('change', () => {
+          updateSortRowsVisibility();
+          applyFilter();
+        });
+      }
+      if (dirEl) dirEl.addEventListener('change', applyFilter);
+    }
+  }
+
+  function applyLocalTimes() {
+    document.querySelectorAll('.local-time[data-epoch]').forEach((el) => {
+      const raw = el.getAttribute('data-epoch');
+      const v = Number(raw);
+      if (!Number.isFinite(v)) return;
+      const d = new Date(v * 1000);
+      if (Number.isNaN(d.getTime())) return;
+      el.textContent = d.toLocaleString();
+    });
+  }
+
+  function metricWindowValue() {
+    return requireEl('metric_window_select')?.value || '15m';
+  }
+
+  function currentMetricRoles() {
+    return getSelectedValues(requireEl('f_role'));
+  }
+
+  function fmtMetricValue(v, unit) {
+    if (v === null || v === undefined || !Number.isFinite(Number(v))) return 'N/A';
+    const n = Number(v);
+    if (unit === 'bytes' || unit === 'B/s') {
+      const suffix = unit === 'B/s' ? '/s' : '';
+      const base = 1024;
+      const names = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+      let value = n;
+      let idx = 0;
+      while (Math.abs(value) >= base && idx < names.length - 1) {
+        value /= base;
+        idx += 1;
+      }
+      const text = idx === 0 ? value.toFixed(0) : value.toFixed(value >= 10 ? 1 : 2);
+      return text + names[idx] + suffix;
+    }
+    if (unit === 'percent') return n.toFixed(n >= 10 ? 1 : 2) + '%';
+    if (unit === 'rps') return n.toFixed(n >= 100 ? 0 : (n >= 10 ? 1 : 2)) + ' rps';
+    if (unit === 'count') return n.toFixed(n >= 10 ? 0 : 2);
+    return n.toFixed(n >= 10 ? 1 : 2);
+  }
+
+  function buildSparklineSvg(series) {
+    if (!Array.isArray(series) || series.length === 0) return '<div class="metric_chart_empty">N/A</div>';
+    const width = 220;
+    const height = 96;
+    const padX = 4;
+    const padY = 6;
+    const vals = series.map((p) => Number(Array.isArray(p) ? p[1] : NaN)).filter((v) => Number.isFinite(v));
+    if (vals.length === 0) return '<div class="metric_chart_empty">N/A</div>';
+    let min = Math.min(...vals);
+    let max = Math.max(...vals);
+    if (min === max) {
+      min -= 1;
+      max += 1;
+    }
+    const stepX = series.length <= 1 ? 0 : (width - padX * 2) / (series.length - 1);
+    const yOf = (v) => {
+      const ratio = (v - min) / (max - min);
+      return height - padY - ratio * (height - padY * 2);
+    };
+    let path = '';
+    let area = '';
+    series.forEach((point, idx) => {
+      const value = Number(point[1]);
+      const x = padX + idx * stepX;
+      const y = yOf(value);
+      path += (idx === 0 ? 'M' : 'L') + x.toFixed(2) + ' ' + y.toFixed(2) + ' ';
+      area += (idx === 0 ? 'M' : 'L') + x.toFixed(2) + ' ' + y.toFixed(2) + ' ';
+    });
+    const lastX = padX + (series.length - 1) * stepX;
+    area += 'L ' + lastX.toFixed(2) + ' ' + (height - padY).toFixed(2) + ' ';
+    area += 'L ' + padX.toFixed(2) + ' ' + (height - padY).toFixed(2) + ' Z';
+    return (
+      '<svg class="metric_chart" viewBox="0 0 ' + width + ' ' + height + '" preserveAspectRatio="none">' +
+      '<path class="metric_chart_area" d="' + area + '"></path>' +
+      '<path class="metric_chart_path" d="' + path + '"></path>' +
+      '</svg>'
+    );
+  }
+
+  let metricPanelState = {
+    selectedMetricKey: null,
+    window: '15m',
+    showAllMembers: false,
+  };
+
+  async function fetchJsonText(url) {
+    const resp = await fetch(url, { cache: 'no-store' });
+    const text = await resp.text();
+    if (!resp.ok) throw new Error(text || ('HTTP ' + resp.status));
+    return JSON.parse(text);
+  }
+
+  function renderMetricWarnings(containerId, warnings) {
+    const el = requireEl(containerId);
+    if (!el) return;
+    const items = Array.isArray(warnings) ? warnings.filter((v) => String(v || '').trim() !== '') : [];
+    if (items.length === 0) {
+      el.innerHTML = '';
+      return;
+    }
+    el.innerHTML = items.slice(0, 6).map((w) => '<div class="warn tiny">' + String(w).replaceAll('<', '&lt;') + '</div>').join('');
+  }
+
+  function patchChildrenByKey(container, items, keyOf, createEl, updateEl) {
+    if (!container) return [];
+    const existing = new Map();
+    Array.from(container.children).forEach((child) => {
+      if (!(child instanceof HTMLElement)) return;
+      const key = child.getAttribute('data-patch-key');
+      if (!key) return;
+      existing.set(key, child);
+    });
+    const nextEls = [];
+    (items || []).forEach((item, idx) => {
+      const keyRaw = keyOf(item, idx);
+      const key = keyRaw === null || keyRaw === undefined ? '' : String(keyRaw);
+      if (key === '') return;
+      let el = existing.get(key);
+      if (!el) {
+        el = createEl(item, idx, key);
+      }
+      if (!(el instanceof HTMLElement)) return;
+      el.setAttribute('data-patch-key', key);
+      updateEl(el, item, idx, key);
+      nextEls.push(el);
+      existing.delete(key);
+    });
+    nextEls.forEach((el) => {
+      container.appendChild(el);
+    });
+    const keep = new Set(nextEls);
+    Array.from(container.children).forEach((child) => {
+      if (!(child instanceof HTMLElement) || !keep.has(child)) {
+        child.remove();
+      }
+    });
+    return nextEls;
+  }
+
+  function metricCardHtml(card, isSelected) {
+    const metric = card.metric || {};
+    return (
+      '<div class="metric_card_head">' +
+      '<div class="metric_card_label">' + (metric.label || metric.key || 'metric') + '</div>' +
+      '<div class="metric_card_value">' + fmtMetricValue(card.latest, metric.unit || '') + '</div>' +
+      '</div>' +
+      buildSparklineSvg(card.aggregate_series || [])
+    );
+  }
+
+  function memberMetricCardHtml(row, unit) {
+    return (
+      '<div class="member_metric_meta">' +
+      '<div class="member_metric_id">' + row.member_id + '</div>' +
+      '<div class="member_metric_sub">' + row.role + ' | ' + row.node_key + '</div>' +
+      '<div class="metric_card_value">' + fmtMetricValue(row.latest, unit || '') + '</div>' +
+      '</div>' +
+      buildSparklineSvg(row.series || [])
+    );
+  }
+
+  function renderMetricCards(data) {
+    const grid = requireEl('metric_grid');
+    if (!grid) return;
+    const metrics = Array.isArray(data?.metrics) ? data.metrics : [];
+    if (metrics.length === 0) {
+      grid.innerHTML = '<div class="metric_chart_empty">No metrics</div>';
+      return;
+    }
+    patchChildrenByKey(
+      grid,
+      metrics,
+      (card) => card?.metric?.key || '',
+      () => {
+        const box = document.createElement('button');
+        box.type = 'button';
+        return box;
+      },
+      (box, card) => {
+        const metric = card.metric || {};
+        const metricKey = metric.key || '';
+        box.type = 'button';
+        box.className = 'metric_card' + (metricPanelState.selectedMetricKey === metricKey ? ' metric_card_selected' : '');
+        box.setAttribute('data-metric-key', metricKey);
+        const nextHtml = metricCardHtml(card, metricPanelState.selectedMetricKey === metricKey);
+        if (box.__fluxonMetricHtml !== nextHtml) {
+          box.innerHTML = nextHtml;
+          box.__fluxonMetricHtml = nextHtml;
+        }
+        box.onclick = () => {
+          metricPanelState.selectedMetricKey = metricKey || null;
+          metricPanelState.showAllMembers = false;
+          saveMetricStateToLocalStorage(metricPanelState);
+          renderMetricCards(data);
+          loadMemberMetric(metricPanelState.selectedMetricKey);
+        };
+      }
+    );
+  }
+
+  function visibleMemberRows(members) {
+    if (metricPanelState.showAllMembers) return members;
+    return members.slice(0, 12);
+  }
+
+  function renderMemberMetric(data) {
+    const section = requireEl('member_metric_section');
+    const title = requireEl('member_metric_title');
+    const subtitle = requireEl('member_metric_subtitle');
+    const status = requireEl('member_metric_status');
+    const grid = requireEl('member_metric_grid');
+    const toggleBtn = requireEl('member_metric_toggle_btn');
+    if (!section || !title || !subtitle || !status || !grid || !toggleBtn) return;
+    const members = Array.isArray(data?.members) ? data.members : [];
+    const metric = data?.metric || {};
+    section.style.display = '';
+    title.textContent = metric.label || metric.key || 'Member Metric';
+    subtitle.textContent = (data?.range?.window || metricPanelState.window) + ' | ' + (members.length + ' members');
+    renderMetricWarnings('member_metric_warn', data?.warnings || []);
+    if (members.length === 0) {
+      status.textContent = 'No members';
+      grid.innerHTML = '<div class="metric_chart_empty">No member series</div>';
+      toggleBtn.style.display = 'none';
+      return;
+    }
+    status.textContent = '';
+    const rows = visibleMemberRows(members);
+    patchChildrenByKey(
+      grid,
+      rows,
+      (row) => [row.member_id || '', row.role || '', row.node_key || ''].join('|'),
+      () => document.createElement('div'),
+      (card, row, _idx, key) => {
+        card.className = 'member_metric_card';
+        card.setAttribute('data-member-id', row.member_id || '');
+        card.setAttribute('data-member-key', key);
+        const nextHtml = memberMetricCardHtml(row, metric.unit || '');
+        if (card.__fluxonMemberMetricHtml !== nextHtml) {
+          card.innerHTML = nextHtml;
+          card.__fluxonMemberMetricHtml = nextHtml;
+        }
+      }
+    );
+    if (members.length > 12) {
+      toggleBtn.style.display = '';
+      toggleBtn.textContent = metricPanelState.showAllMembers ? 'Show less' : 'Show all';
+    } else {
+      toggleBtn.style.display = 'none';
+    }
+  }
+
+  async function loadMemberMetric(metricKey) {
+    const section = requireEl('member_metric_section');
+    const status = requireEl('member_metric_status');
+    const grid = requireEl('member_metric_grid');
+    if (!metricKey || !section || !status || !grid) {
+      if (section) section.style.display = 'none';
+      return;
+    }
+    const hasExisting = String(grid.innerHTML || '').trim() !== '';
+    section.style.display = '';
+    status.textContent = hasExisting ? 'Refreshing member series...' : 'Loading member series...';
+    try {
+      const params = new URLSearchParams();
+      params.set('cluster_name', clusterName);
+      params.set('metric_key', metricKey);
+      params.set('window', metricPanelState.window);
+      for (const role of currentMetricRoles()) {
+        params.append('member_roles', role);
+      }
+      const data = await fetchJsonText('/api/kv_metric_members?' + params.toString());
+      renderMemberMetric(data);
+    } catch (e) {
+      status.textContent = String(e);
+      renderMetricWarnings('member_metric_warn', []);
+    }
+  }
+
+  async function loadMetricPanel() {
+    const grid = requireEl('metric_grid');
+    const status = requireEl('metric_panel_status');
+    if (!grid || !status || memberKind !== 'kv') return;
+    const hasExisting = String(grid.innerHTML || '').trim() !== '';
+    status.textContent = hasExisting ? 'Refreshing metric panel...' : 'Loading metric panel...';
+    try {
+      const params = new URLSearchParams();
+      params.set('cluster_name', clusterName);
+      params.set('window', metricPanelState.window);
+      for (const role of currentMetricRoles()) {
+        params.append('member_roles', role);
+      }
+      const data = await fetchJsonText('/api/kv_metric_panel?' + params.toString());
+      status.textContent = '';
+      renderMetricWarnings('metric_panel_warn', data?.warnings || []);
+      renderMetricCards(data);
+      if (metricPanelState.selectedMetricKey) {
+        await loadMemberMetric(metricPanelState.selectedMetricKey);
+      } else {
+        const section = requireEl('member_metric_section');
+        if (section) section.style.display = 'none';
+      }
+    } catch (e) {
+      status.textContent = String(e);
+      renderMetricWarnings('metric_panel_warn', []);
+    }
+  }
+
+  const saved = loadTableStateFromLocalStorage();
+  if (saved) {
+    restoreTableState(saved);
+  }
+  const metricSaved = loadMetricStateFromLocalStorage();
+  if (metricSaved) {
+    metricPanelState = Object.assign(metricPanelState, metricSaved || {});
+  }
+  function syncMetricWindowSelect() {
+    const el = requireEl('metric_window_select');
+    if (el) {
+      el.value = metricPanelState.window || '15m';
+    }
+  }
+  syncMetricWindowSelect();
+  updateSortRowsVisibility();
+  wireUiHandlers();
+  applyFilter();
+  applyLocalTimes();
+  if (memberKind === 'kv') {
+    loadMetricPanel();
+  }
+
+  function wireMetricUiHandlers() {
+    const metricReloadBtn = requireEl('metric_reload_btn');
+    if (metricReloadBtn) {
+      metricReloadBtn.onclick = () => {
+        metricPanelState.window = metricWindowValue();
+        saveMetricStateToLocalStorage(metricPanelState);
+        loadMetricPanel();
+      };
+    }
+    const metricWindowSelect = requireEl('metric_window_select');
+    if (metricWindowSelect) {
+      metricWindowSelect.onchange = () => {
+        metricPanelState.window = metricWindowValue();
+        saveMetricStateToLocalStorage(metricPanelState);
+        loadMetricPanel();
+      };
+    }
+    const memberMetricToggleBtn = requireEl('member_metric_toggle_btn');
+    if (memberMetricToggleBtn) {
+      memberMetricToggleBtn.onclick = () => {
+        metricPanelState.showAllMembers = !metricPanelState.showAllMembers;
+        saveMetricStateToLocalStorage(metricPanelState);
+        if (metricPanelState.selectedMetricKey) {
+          loadMemberMetric(metricPanelState.selectedMetricKey);
+        }
+      };
+    }
+  }
+  wireMetricUiHandlers();
+
+  // English note: Replace-SSR Contract v1.
+  // - `#app` is the only replaced container.
+  // - Hooks must be defined here (not in `#app`) so they survive `#app` replacement.
+  // - Tool JS is injected by fluxon_cli server right before `</body>`.
+  window.fluxon_cli_auto_refresh_hooks = {
+    captureState: () => captureState(),
+    restoreState: (state) => restoreState(state),
+    afterReplace: () => {
+      syncMetricWindowSelect();
+      wireUiHandlers();
+      wireMetricUiHandlers();
+      applyFilter();
+      applyLocalTimes();
+      if (memberKind === 'kv') {
+        loadMetricPanel();
+      }
+    },
+  };
+  window.fluxon_cli_auto_refresh_cfg = {
+    // Keep it explicit to avoid hidden defaults. Must match tool constant.
+    mode: 'replace_app',
+    refreshSecs: refreshSecs,
+    url: window.location.href,
+    appId: 'app',
+    countdownId: 'refresh-in',
+  };
+})();
+</script>
+{% endblock %}

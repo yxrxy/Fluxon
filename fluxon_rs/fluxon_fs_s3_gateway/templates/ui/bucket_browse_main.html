@@ -1,0 +1,380 @@
+<script id="ui_bootstrap" type="application/json">{{ bootstrap_json|safe }}</script>
+
+<div id="workspace_notice" class="workspace_notice"></div>
+
+<div id="workspace_surface">
+  <div class="workspace">
+    <div id="ui_workspace_host" class="pane_strip"></div>
+    <div id="ui_context_menu" class="context_menu"></div>
+  </div>
+</div>
+
+<div id="workspace_transfers_surface" class="workspace_surface_hidden">
+  <div class="transfers_page">
+    <section class="transfer_section">
+      <div class="transfer_section_head">
+        <div>
+          <div class="transfer_section_title">Browser Transfers</div>
+          <div class="transfer_section_hint">Uploads, copies, and moves started from the console.</div>
+        </div>
+      </div>
+      <div id="transfers_host" class="transfer_section_body">
+        <div class="empty_state">No transfers yet.</div>
+      </div>
+    </section>
+    <section class="transfer_section">
+      <div class="transfer_section_head">
+        <div>
+          <div class="transfer_section_title">Pre-Scans</div>
+          <div class="transfer_section_hint">Directory scans started ahead of time. Import one to bind a target export and continue scan or transfer.</div>
+        </div>
+      </div>
+      <div id="transfer_prescans_host" class="transfer_section_body">
+        <div class="empty_state">Loading pre-scans...</div>
+      </div>
+    </section>
+    <section class="transfer_section">
+      <div class="transfer_section_head">
+        <div>
+          <div class="transfer_section_title">FluxonFS Transfer Jobs</div>
+          <div class="transfer_section_hint">Live scheduler and worker detail for FluxonFS batch transfer jobs.</div>
+        </div>
+      </div>
+      <div class="transfer_jobs_layout">
+        <div id="transfer_jobs_host" class="transfer_jobs_list">
+          <div class="empty_state">Loading transfer jobs...</div>
+        </div>
+        <div id="transfer_job_detail_host" class="transfer_job_detail">
+          <div class="empty_state">Select a transfer job to inspect live detail.</div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div
+  id="open_bucket_modal"
+  class="modal_backdrop"
+  onclick="if(event.target===this){__fluxonUiClose('open_bucket_modal');}"
+>
+  <div class="modal">
+    <div class="modal_head">
+      <div>
+        <strong>Open Bucket</strong>
+        <div class="hint">Open another bucket root or prefix as a new page.</div>
+      </div>
+      <button class="btn" type="button" onclick="__fluxonUiClose('open_bucket_modal')">Close</button>
+    </div>
+    <form id="open_bucket_form" class="modal_body">
+      <div class="field">
+        <label>Bucket</label>
+        <select id="open_bucket_select" name="bucket" required></select>
+      </div>
+      <div class="field">
+        <label>Prefix</label>
+        <input id="open_bucket_prefix_input" type="text" name="prefix" placeholder="e.g. images/" />
+      </div>
+      <div class="hint">
+        Prefix must be empty or end with '/'. Cross-bucket object drag-and-drop copies;
+        same-bucket object drag-and-drop moves; cross-export folder drag-and-drop opens a
+        FluxonFS transfer job form.
+      </div>
+      <div class="modal_foot">
+        <button class="btn" type="button" onclick="__fluxonUiClose('open_bucket_modal')">
+          Cancel
+        </button>
+        <button class="btn primary" type="submit">Open</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div
+  id="upload_modal"
+  class="modal_backdrop"
+  onclick="if(event.target===this){__fluxonUiClose('upload_modal');}"
+>
+  <div class="modal">
+    <div class="modal_head">
+      <div>
+        <strong>Upload Object</strong>
+        <div class="hint">This uploads to the active page prefix.</div>
+      </div>
+      <button class="btn" type="button" onclick="__fluxonUiClose('upload_modal')">Close</button>
+    </div>
+    <form id="upload_form" class="modal_body" enctype="multipart/form-data">
+      <input id="upload_prefix_input" type="hidden" name="prefix" value="{{ prefix }}" />
+      <div class="field">
+        <label>Prefix</label>
+        <div id="upload_prefix_view" class="mono muted">{{ prefix_display }}</div>
+      </div>
+      <div class="field">
+        <label>File</label>
+        <input type="file" name="file" required />
+      </div>
+      <div class="hint">Uploads use multipart pieces with bounded concurrency.</div>
+      <div id="upload_progress_shell" class="progress_shell">
+        <div class="progress_head">
+          <div id="upload_progress_label" class="progress_label"></div>
+          <div id="upload_progress_stage" class="progress_stage"></div>
+        </div>
+        <div class="progress_bar">
+          <span id="upload_progress_fill" class="progress_fill"></span>
+        </div>
+        <div id="upload_status" class="progress_detail"></div>
+      </div>
+      <div class="modal_foot">
+        <button class="btn" type="button" onclick="__fluxonUiClose('upload_modal')">Cancel</button>
+        <button class="btn primary" type="submit">Upload</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div
+  id="mkdir_modal"
+  class="modal_backdrop"
+  onclick="if(event.target===this){__fluxonUiClose('mkdir_modal');}"
+>
+  <div class="modal">
+    <div class="modal_head">
+      <div>
+        <strong>New Folder</strong>
+        <div class="hint">Creates a directory under the active page prefix.</div>
+      </div>
+      <button class="btn" type="button" onclick="__fluxonUiClose('mkdir_modal')">Close</button>
+    </div>
+    <form id="mkdir_form" class="modal_body">
+      <input id="mkdir_prefix_input" type="hidden" name="prefix" value="{{ prefix }}" />
+      <div class="field">
+        <label>Prefix</label>
+        <div id="mkdir_prefix_view" class="mono muted">{{ prefix_display }}</div>
+      </div>
+      <div class="field">
+        <label>Folder Name</label>
+        <input type="text" name="name" placeholder="e.g. images" required />
+      </div>
+      <div class="hint">Rules: single segment, no '/' characters.</div>
+      <div class="modal_foot">
+        <button class="btn" type="button" onclick="__fluxonUiClose('mkdir_modal')">Cancel</button>
+        <button class="btn primary" type="submit">Create</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div
+  id="folder_transfer_modal"
+  class="modal_backdrop"
+  onclick="if(event.target===this){__fluxonUiClose('folder_transfer_modal');}"
+>
+  <div class="modal">
+    <div class="modal_head">
+      <div>
+        <strong>Create Folder Transfer Job</strong>
+        <div class="hint">Cross-export folder drag creates a FluxonFS batch transfer job.</div>
+      </div>
+      <button class="btn" type="button" onclick="__fluxonUiClose('folder_transfer_modal')">Close</button>
+    </div>
+    <form id="folder_transfer_form" class="modal_body">
+      <input id="folder_transfer_src_export" type="hidden" name="src_export" />
+      <input id="folder_transfer_src_root_relpath" type="hidden" name="src_root_relpath" />
+      <input id="folder_transfer_dst_export" type="hidden" name="dst_export" />
+      <input id="folder_transfer_dst_root_relpath" type="hidden" name="dst_root_relpath" />
+      <div class="field">
+        <label>Source Folder</label>
+        <div id="folder_transfer_src_view" class="mono muted">/</div>
+      </div>
+      <div class="field">
+        <label>Target Root</label>
+        <div id="folder_transfer_dst_view" class="mono muted">/</div>
+      </div>
+      <div class="field">
+        <label>Scan Concurrency Target</label>
+        <input
+          id="folder_transfer_scan_concurrency"
+          type="number"
+          name="desired_scan_concurrency"
+          min="1"
+          step="1"
+          required
+        />
+      </div>
+      <div class="field">
+        <label>Desired Worker Count</label>
+        <input
+          id="folder_transfer_worker_count"
+          type="number"
+          name="desired_worker_count"
+          min="1"
+          step="1"
+          required
+        />
+      </div>
+      <div class="field">
+        <label>Batch Ready Bytes</label>
+        <input
+          id="folder_transfer_batch_ready_bytes"
+          type="number"
+          name="batch_ready_bytes"
+          min="1"
+          step="1"
+          required
+        />
+      </div>
+      <div class="hint">Scan concurrency target defaults to 10. Worker count and batch size remain explicit inputs.</div>
+      <div class="modal_foot">
+        <button class="btn" type="button" onclick="__fluxonUiClose('folder_transfer_modal')">Cancel</button>
+        <button id="folder_transfer_submit" class="btn primary" type="submit">Create Transfer</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div
+  id="transfer_prescan_import_modal"
+  class="modal_backdrop"
+  onclick="if(event.target===this){__fluxonUiClose('transfer_prescan_import_modal');}"
+>
+  <div class="modal">
+    <div class="modal_head">
+      <div>
+        <strong>Import Pre-Scan</strong>
+        <div class="hint">Bind a source export and target prefix for the selected pre-scan job.</div>
+      </div>
+      <button class="btn" type="button" onclick="__fluxonUiClose('transfer_prescan_import_modal')">Close</button>
+    </div>
+    <form id="transfer_prescan_import_form" class="modal_body">
+      <input id="transfer_prescan_import_job_id" type="hidden" name="job_id" />
+      <div class="field">
+        <label>Source Root</label>
+        <div id="transfer_prescan_import_src_root" class="mono muted">/</div>
+      </div>
+      <div class="field">
+        <label>Source Export</label>
+        <select id="transfer_prescan_import_src_export" name="src_export" required></select>
+      </div>
+      <div class="field">
+        <label>Batch Ready Bytes</label>
+        <div id="transfer_prescan_import_batch_ready" class="mono muted">0</div>
+      </div>
+      <div class="field">
+        <label>Target Export</label>
+        <select id="transfer_prescan_import_dst_export" name="dst_export" required></select>
+      </div>
+      <div class="field">
+        <label>Target Prefix</label>
+        <input
+          id="transfer_prescan_import_dst_prefix"
+          type="text"
+          name="dst_prefix"
+          placeholder="e.g. ingest/"
+        />
+      </div>
+      <div class="field">
+        <label>Scan Concurrency Target</label>
+        <input
+          id="transfer_prescan_import_scan_concurrency"
+          type="number"
+          name="desired_scan_concurrency"
+          min="1"
+          step="1"
+          required
+        />
+      </div>
+      <div class="field">
+        <label>Desired Worker Count</label>
+        <input
+          id="transfer_prescan_import_worker_count"
+          type="number"
+          name="desired_worker_count"
+          min="0"
+          step="1"
+          required
+        />
+      </div>
+      <div class="hint">Use `0` to keep scan-only after import. Non-empty target prefixes must end with `/`.</div>
+      <div class="modal_foot">
+        <button class="btn" type="button" onclick="__fluxonUiClose('transfer_prescan_import_modal')">
+          Cancel
+        </button>
+        <button id="transfer_prescan_import_submit" class="btn primary" type="submit">Import</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div
+  id="transfer_failure_detail_modal"
+  class="modal_backdrop"
+  onclick="if(event.target===this){__fluxonUiClose('transfer_failure_detail_modal');}"
+>
+  <div class="modal">
+    <div class="modal_head">
+      <div>
+        <strong>Transfer Failure Detail</strong>
+        <div class="hint">Loaded on click to avoid preloading every failure body.</div>
+      </div>
+      <button class="btn" type="button" onclick="__fluxonUiClose('transfer_failure_detail_modal')">Close</button>
+    </div>
+    <div class="modal_body">
+      <div id="transfer_failure_detail_meta" class="transfer_job_detail_item muted">No failure selected.</div>
+      <pre id="transfer_failure_detail_message" class="mono" style="white-space:pre-wrap;margin:12px 0 0;"></pre>
+    </div>
+  </div>
+</div>
+
+<div
+  id="transfer_file_issue_detail_modal"
+  class="modal_backdrop"
+  onclick="if(event.target===this){__fluxonUiClose('transfer_file_issue_detail_modal');}"
+>
+  <div class="modal">
+    <div class="modal_head">
+      <div>
+        <strong>Transfer File Issue Detail</strong>
+        <div class="hint">Loaded on click to avoid preloading every file issue body.</div>
+      </div>
+      <button class="btn" type="button" onclick="__fluxonUiClose('transfer_file_issue_detail_modal')">Close</button>
+    </div>
+    <div class="modal_body">
+      <div id="transfer_file_issue_detail_meta" class="transfer_job_detail_item muted">No file issue selected.</div>
+      <pre id="transfer_file_issue_detail_message" class="mono" style="white-space:pre-wrap;margin:12px 0 0;"></pre>
+    </div>
+  </div>
+</div>
+
+<div
+  id="transfer_unavailable_modal"
+  class="modal_backdrop"
+  onclick="if(event.target===this){__fluxonUiClose('transfer_unavailable_modal');}"
+>
+  <div class="modal">
+    <div class="modal_head">
+      <div>
+        <strong>Directory Transfer Unavailable</strong>
+        <div class="hint">Cross-export folder drag requires the FluxonFS transfer backend.</div>
+      </div>
+      <button class="btn" type="button" onclick="__fluxonUiClose('transfer_unavailable_modal')">Close</button>
+    </div>
+    <div class="modal_body">
+      <div class="field">
+        <label>Source Folder</label>
+        <div id="transfer_unavailable_src_view" class="mono muted">/</div>
+      </div>
+      <div class="field">
+        <label>Target Root</label>
+        <div id="transfer_unavailable_dst_view" class="mono muted">/</div>
+      </div>
+      <div class="field">
+        <label>Why This Is Blocked</label>
+        <div id="transfer_unavailable_reason" class="hint"></div>
+      </div>
+      <div class="modal_foot">
+        <button class="btn primary" type="button" onclick="__fluxonUiClose('transfer_unavailable_modal')">
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

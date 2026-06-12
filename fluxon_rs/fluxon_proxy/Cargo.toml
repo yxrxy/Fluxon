@@ -1,0 +1,20 @@
+[package]
+name = "fluxon_proxy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+readme.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+bitcode = { workspace = true }
+prost = { workspace = true }
+tokio = { workspace = true }
+
+fluxon_proxy_proto = { path = "../fluxon_proxy_proto" }
+fluxon_kv = { path = "../fluxon_kv", default-features = false }
+fluxon_util = { path = "../fluxon_util" }
+fluxon_cli = { path = "../fluxon_cli" }

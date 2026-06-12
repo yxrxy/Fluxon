@@ -1,0 +1,14 @@
+<div class="admin_grid">
+  {% for card in cards %}
+    <a class="admin_card" href="{{ card.href }}">
+      <div class="admin_card_icon" style="{{ card.icon_style }}">
+        {{ card.icon_html|safe }}
+      </div>
+      <div class="admin_card_body">
+        <div class="admin_card_title">{{ card.title }}</div>
+        <div class="admin_card_desc">{{ card.desc }}</div>
+      </div>
+      <span class="admin_card_arrow">&#8250;</span>
+    </a>
+  {% endfor %}
+</div>

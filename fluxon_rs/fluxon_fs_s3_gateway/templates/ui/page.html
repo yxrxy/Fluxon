@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>{{ ui_page_title }} - {{ title_suffix }}</title>
+  <style>{{ ui_css|safe }}</style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="side_head">
+        <a class="brand" href="{{ home_href }}"><span class="brand_mark"></span><span class="brand_name">Fluxon<span style="color:var(--brand2)">FS</span></span></a>
+      </div>
+      <nav class="nav">
+        <a id="nav_buckets_link" class="nav_item{{ buckets_active_class }}" href="{{ buckets_href }}">Buckets</a>
+        <a id="nav_transfers_link" class="nav_item{{ transfers_active_class }}" href="{{ transfers_href }}">Transfers<span id="nav_transfer_badge" class="nav_badge"></span></a>
+      </nav>
+    </aside>
+    <div class="main">
+      <header class="topbar">
+        <div id="page_crumbs" class="crumbs">{{ crumbs_html|safe }}</div>
+        <div class="top_actions">
+          <div class="search"><span class="search_icon">/</span><input id="search" type="text" placeholder="Search..."/></div>
+          {{ user_actions_html|safe }}
+        </div>
+      </header>
+      <div class="content">
+        <div class="card">
+          <div class="card_head">
+            <div>
+              <h1 id="page_title" class="title">{{ page_title }}</h1>
+              {% if show_subtitle %}
+              <div id="page_subtitle" class="subtitle">{{ subtitle_html|safe }}</div>
+              {% endif %}
+            </div>
+            {% if show_top_buttons %}
+            <div id="page_row_actions" class="row_actions">{{ top_buttons_html|safe }}</div>
+            {% endif %}
+          </div>
+          {{ main_html|safe }}
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>{{ ui_js|safe }}</script>
+</body>
+</html>

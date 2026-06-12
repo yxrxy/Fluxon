@@ -1,0 +1,106 @@
+<section class="users_panel fs_master_panel_full">
+  <div class="users_panel_head">
+    <div>
+      <div class="users_panel_eyebrow">Mount Graph</div>
+      <h2 class="users_panel_title">Remote Mountable Paths</h2>
+      <div class="users_panel_desc">
+        Correlate configured exports, runtime mounts, and owner mapping by remote root path so delayed
+        mount visibility can be inspected from one page.
+      </div>
+    </div>
+  </div>
+
+  <div class="users_panel_body">
+    <h3 style="margin-top:0">Overview</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>remote_root_dir_abs</th>
+          <th>mounts</th>
+          <th>externals</th>
+          <th>providers</th>
+          <th>owners_mapped</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if show_empty_overview %}
+          <tr>
+            <td colspan="5" class="mono muted">(none)</td>
+          </tr>
+        {% else %}
+          {% for row in overview_rows %}
+            <tr>
+              <td class="mono">{{ row.remote_root_dir_abs }}</td>
+              <td class="mono">{{ row.mounts_count }}</td>
+              <td class="mono">{{ row.externals_count }}</td>
+              <td class="mono">{{ row.providers_count }}</td>
+              <td class="mono">{{ row.owners_mapped_text }}</td>
+            </tr>
+          {% endfor %}
+        {% endif %}
+      </tbody>
+    </table>
+
+    {% for detail in details %}
+      <details open style="margin-top:16px">
+        <summary class="mono">
+          {{ detail.remote_root_dir_abs }} (mounts={{ detail.mounts_count }}, providers={{ detail.providers_count }})
+        </summary>
+
+        <h4>Mounts</h4>
+        {% if detail.show_empty_mounts %}
+          <div class="mono muted">(none)</div>
+        {% else %}
+          <table>
+            <thead>
+              <tr>
+                <th>external_instance_key</th>
+                <th>local_mount_dir_abs</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for mount in detail.mounts %}
+                <tr>
+                  <td class="mono">{{ mount.external_instance_key }}</td>
+                  <td>
+                    {% for local_mount_dir_abs in mount.local_mount_dirs %}
+                      <div class="mono">{{ local_mount_dir_abs }}</div>
+                    {% endfor %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% endif %}
+
+        <h4>Providers</h4>
+        {% if detail.show_empty_providers %}
+          <div class="mono muted">(none)</div>
+        {% else %}
+          <table>
+            <thead>
+              <tr>
+                <th>config_key</th>
+                <th>nodes</th>
+                <th>mapped_members_by_owner</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for provider in detail.providers %}
+                <tr>
+                  <td class="mono">{{ provider.config_key }}</td>
+                  <td class="mono">{{ provider.nodes }}</td>
+                  <td>
+                    {% for mapped_line in provider.mapped_lines %}
+                      <div class="mono">{{ mapped_line }}</div>
+                    {% endfor %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% endif %}
+      </details>
+    {% endfor %}
+  </div>
+</section>

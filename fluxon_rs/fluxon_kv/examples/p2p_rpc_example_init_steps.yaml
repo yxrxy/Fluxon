@@ -1,0 +1,82 @@
+version: 3
+title: p2p_rpc_example init
+
+resources: []
+
+module_tags:
+  ClusterManager: [owner]
+  P2pModule: [owner]
+  ChatModule: [owner]
+
+steps:
+  - id: ClusterManager.step.0.construct
+    module: ClusterManager
+    mode: Blocking
+    deps: []
+    doc: |
+      - Construct: ClusterManager (no PostView)
+    exec:
+      kind: Construct
+      call: "ClusterManager::construct"
+      arg_field: "cluster_manager_arg"
+    best_effort: null
+
+  - id: P2pModule.step.0.construct
+    module: P2pModule
+    mode: Blocking
+    deps: []
+    doc: |
+      - Construct: P2pModule (no PostView)
+    exec:
+      kind: Construct
+      call: "P2pModule::construct"
+      arg_field: "p2p_arg"
+    best_effort: null
+
+  - id: ChatModule.step.0.construct
+    module: ChatModule
+    mode: Blocking
+    deps: []
+    doc: |
+      - Construct: ChatModule (no PostView)
+    exec:
+      kind: Construct
+      call: "ChatModule::construct"
+      arg_field: "chat_arg"
+    best_effort: null
+
+  - id: ClusterManager.step.1.init2
+    module: ClusterManager
+    mode: Blocking
+    deps: []
+    doc: |
+      - Start: cluster member watch
+    exec:
+      kind: Call
+      call: "ClusterManager::init2_for_init_dag"
+    best_effort: null
+
+  - id: P2pModule.step.1.init2
+    module: P2pModule
+    mode: Blocking
+    deps:
+      - ClusterManager.step.1.init2
+    doc: |
+      - Start: p2p transport + RPC core
+    exec:
+      kind: Call
+      call: "P2pModule::init2_for_init_dag"
+    best_effort: null
+
+  - id: ChatModule.step.1.init2
+    module: ChatModule
+    mode: Blocking
+    deps:
+      - ClusterManager.step.1.init2
+      - P2pModule.step.1.init2
+    doc: |
+      - Start: chat RPC + background loops
+    exec:
+      kind: Call
+      call: "ChatModule::init2_for_example"
+    best_effort: null

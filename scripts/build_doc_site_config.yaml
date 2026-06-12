@@ -1,0 +1,44 @@
+site:
+  title: Fluxon 文档站
+  description: Fluxon 项目文档站
+
+root_nav:
+  - kind: page
+    path: index.md
+    title: 首页
+  - kind: page
+    path: roadmap.md
+    title: 路线图
+  - kind: dir
+    path: en
+    title: English
+    nav_link_mode: index
+  - kind: dir
+    path: user_doc
+    title: 用户文档
+    nav_link_mode: index
+  - kind: dir
+    path: dev_doc
+    title: 开发者文档
+    nav_link_mode: index
+  - kind: dir
+    path: rules
+    title: 规则文档
+    nav_link_mode: index
+  - kind: dir
+    path: design
+    title: 架构设计
+    nav_link_mode: index
+  - kind: dir
+    path: design_test
+    title: 设计测试
+    nav_link_mode: index
+  - kind: dir
+    path: blogs
+    title: 博客
+    nav_link_mode: index
+
+page_overrides:
+  user_doc/用户 - 3 - KV-RPC接口.md:
+    publish: true
+    title: 用户 - 3 - KV 和 RPC 接口

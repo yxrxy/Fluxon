@@ -1,0 +1,39 @@
+<div class="users_page">
+  {% for warning in warnings %}
+    <div class="warn">{{ warning }}</div>
+  {% endfor %}
+
+  <section class="users_panel fs_master_summary_panel">
+    <div class="users_panel_body">
+      <div class="fs_master_summary_strip">
+        <span class="pill">
+          members:
+          <strong class="mono">{{ member_count }}</strong>
+        </span>
+        <span class="pill">
+          agents:
+          <strong class="mono">{{ agent_count }}</strong>
+        </span>
+        <span class="pill">
+          controllers:
+          <strong class="mono">{{ controller_count }}</strong>
+        </span>
+        <span class="pill">
+          runtime_exports:
+          <strong class="mono">{{ runtime_exports_count }}</strong>
+        </span>
+        <span class="pill">
+          managed_exports:
+          <strong class="mono">{{ managed_exports_count }}</strong>
+        </span>
+      </div>
+    </div>
+  </section>
+
+  <div class="users_layout fs_master_layout">
+    {{ runtime_section_html|safe }}
+    {{ membership_section_html|safe }}
+    {{ export_manager_section_html|safe }}
+    {{ mount_graph_section_html|safe }}
+  </div>
+</div>

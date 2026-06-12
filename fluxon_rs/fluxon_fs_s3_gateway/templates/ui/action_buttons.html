@@ -1,0 +1,19 @@
+{% for button in buttons %}
+  {% if button.is_link %}
+    <a
+      {% if button.id != "" %}id="{{ button.id }}"{% endif %}
+      class="{{ button.class_name }}"
+      href="{{ button.href }}"
+    >
+      {{ button.label }}
+    </a>
+  {% else %}
+    <button
+      {% if button.id != "" %}id="{{ button.id }}"{% endif %}
+      class="{{ button.class_name }}"
+      type="{{ button.button_type }}"
+    >
+      {{ button.label }}
+    </button>
+  {% endif %}
+{% endfor %}

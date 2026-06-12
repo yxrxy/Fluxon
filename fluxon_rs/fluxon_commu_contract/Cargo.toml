@@ -1,0 +1,29 @@
+[package]
+name = "fluxon_commu_contract"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+readme.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+bitcode = { workspace = true }
+bytes = { workspace = true }
+crossbeam = "0.8"
+etcd-client = { workspace = true }
+libc = { workspace = true }
+prost = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+fluxon_framework_compiled = { path = "../fluxon_framework_compiled" }
+fluxon_observability = { path = "../fluxon_observability" }
+fluxon_util = { path = "../fluxon_util" }
+limit_thirdparty = { path = "../limit_thirdparty" }

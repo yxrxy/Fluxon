@@ -1,0 +1,30 @@
+[package]
+name = "fluxon_ops"
+version = "0.2.1"
+edition = "2024"
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+hyper = { workspace = true }
+libc = { workspace = true }
+askama = { workspace = true }
+etcd-client = { workspace = true }
+clap = { workspace = true }
+futures = { workspace = true }
+hex = "0.4"
+sha2 = "0.10"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+base64 = "0.21"
+
+fluxon_kv = { path = "../fluxon_kv", default-features = false }
+fluxon_framework = { path = "../fluxon_framework" }
+fluxon_util = { path = "../fluxon_util" }
+fluxon_cli = { path = "../fluxon_cli" }
+fluxon_proxy = { path = "../fluxon_proxy" }

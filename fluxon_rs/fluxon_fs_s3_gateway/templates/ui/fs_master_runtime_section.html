@@ -1,0 +1,44 @@
+<section class="users_panel fs_master_panel_half">
+  <div class="users_panel_head">
+    <div>
+      <div class="users_panel_eyebrow">Runtime View</div>
+      <h2 class="users_panel_title">Runtime Registry</h2>
+      <div class="users_panel_desc">
+        This is the live runtime registry reported by online agents. It stays separate from the
+        operator-managed merged export view below.
+      </div>
+    </div>
+  </div>
+  <div class="users_panel_body">
+    <table>
+      <thead>
+        <tr>
+          <th>agent_instance_key</th>
+          <th>runtime_exports</th>
+          <th>runtime_export_names</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if show_empty_agents %}
+          <tr>
+            <td colspan="3" class="mono muted">(none)</td>
+          </tr>
+        {% else %}
+          {% for agent in agents %}
+            <tr>
+              <td class="mono">{{ agent.agent_instance_key }}</td>
+              <td class="mono">{{ agent.runtime_exports_count }}</td>
+              <td>
+                {% if agent.show_empty_runtime_export_names %}
+                  <span class="mono muted">(none)</span>
+                {% else %}
+                  <span class="mono mono_scroll_x">{{ agent.runtime_export_names_display }}</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</section>

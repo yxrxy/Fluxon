@@ -1,0 +1,9 @@
+-Wl,-rpath,$ORIGIN/../../..
+-Wl,-rpath,$ORIGIN/../../../vendor_runtime/lib
+-Wl,-rpath,$ORIGIN/../../../vendor_runtime/lib64
+$ORIGIN/../../libfluxon_rdma_probe.so
+-lz
+-lnuma
+$ORIGIN/../../../vendor_runtime/lib/libibverbs.so
+$ORIGIN/../../../vendor_runtime/lib/libnl-3.so
+$ORIGIN/../../../vendor_runtime/lib/libnl-route-3.so

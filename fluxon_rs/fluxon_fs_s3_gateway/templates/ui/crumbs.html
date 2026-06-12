@@ -1,0 +1,16 @@
+{% for crumb in crumbs %}
+  {% if !loop.first %}
+    <span class="crumb_sep">/</span>
+  {% endif %}
+  {% if crumb.has_href %}
+    <a href="{{ crumb.href }}">
+      {% if crumb.current %}
+        <span class="crumb_cur">{{ crumb.label }}</span>
+      {% else %}
+        {{ crumb.label }}
+      {% endif %}
+    </a>
+  {% else %}
+    <span class="crumb_cur">{{ crumb.label }}</span>
+  {% endif %}
+{% endfor %}

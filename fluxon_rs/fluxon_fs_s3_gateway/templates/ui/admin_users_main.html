@@ -1,0 +1,146 @@
+{% for warning in warnings %}
+  <div class="warn">{{ warning }}</div>
+{% endfor %}
+
+{% if show_content %}
+  <div class="users_page">
+    <div class="users_layout">
+      <section class="users_panel">
+        <div class="users_panel_head">
+          <div>
+            <div class="users_panel_eyebrow">Identity Setup</div>
+            <h2 class="users_panel_title">Create User</h2>
+            <div class="users_panel_desc">
+              Create a console identity first, then bind scope_access on the dedicated page. Manager
+              users can edit users, scope_access, and use view-as.
+            </div>
+          </div>
+        </div>
+        <div class="users_panel_body">
+          <form method="post" class="users_form" action="{{ create_action }}">
+            <div class="users_form_grid">
+              <div class="field full">
+                <label>Username</label>
+                <input type="text" name="username" placeholder="developer_01" required />
+              </div>
+              <div class="field">
+                <label>Password</label>
+                <input type="password" name="password" autocomplete="new-password" required />
+              </div>
+              <div class="field">
+                <label>Confirm Password</label>
+                <input type="password" name="confirm_password" autocomplete="new-password" required />
+              </div>
+              <div class="field full">
+                <label>Access</label>
+                <label class="check_item">
+                  <input type="checkbox" name="can_manage_users" value="true" />
+                  <span>Manage users, scope_access, and view-as</span>
+                </label>
+              </div>
+            </div>
+            <div class="users_hint">
+              Passwords must be non-empty and cannot contain leading or trailing whitespace. New
+              non-manager users start with no scope_access until you bind them on
+              <a class="link" href="{{ scope_access_href }}">Scope Access</a>.
+            </div>
+            <div class="users_form_actions">
+              <button class="btn primary" type="submit">Create User</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <section class="users_panel">
+        <div class="users_panel_head">
+          <div>
+            <div class="users_panel_eyebrow">Directory</div>
+            <h2 class="users_panel_title">Existing Users</h2>
+            <div class="users_panel_desc">
+              Search by username from the top bar, then view-as, rotate secrets, or remove stale
+              identities from a cleaner per-user card layout.
+            </div>
+          </div>
+          <div class="users_stat">{{ user_count_label }}</div>
+        </div>
+        <div class="users_panel_body">
+          {% if show_empty_users %}
+            <div class="empty_state">No users configured.</div>
+          {% else %}
+            <div class="users_list">
+              {% for user in users %}
+                <article class="user_card" data-filter-row data-filter-text="{{ user.filter_text }}">
+                  <div class="user_card_head">
+                    <div class="user_card_identity">
+                      <div class="user_card_name mono">{{ user.username }}</div>
+                      <div class="user_badges">
+                        <span class="rule_badge">{{ user.scope_count_label }}</span>
+                        {% if user.is_manager %}
+                          <span class="pill">manager</span>
+                        {% endif %}
+                      </div>
+                    </div>
+                    <div class="user_quick_actions">
+                      <a class="btn" href="{{ user.view_as_href }}">View As</a>
+                      <form method="post" class="user_action_form" action="{{ user.delete_action }}">
+                        <input type="hidden" name="username" value="{{ user.username }}" />
+                        <button class="btn danger" type="submit" onclick="return confirm('Delete this user?');">
+                          Delete
+                        </button>
+                      </form>
+                    </div>
+                  </div>
+
+                  <div class="user_reset_shell">
+                    <div class="user_reset_label">Access Control</div>
+                    <form method="post" class="users_form_actions" action="{{ user.update_access_action }}">
+                      <input type="hidden" name="username" value="{{ user.username }}" />
+                      <label class="check_item">
+                        <input
+                          type="checkbox"
+                          name="can_manage_users"
+                          value="true"
+                          {% if user.is_manager %}checked{% endif %}
+                        />
+                        <span>Manage users, scope_access, and view-as</span>
+                      </label>
+                      <button class="btn" type="submit">Save Access</button>
+                    </form>
+                  </div>
+
+                  <div class="user_reset_shell">
+                    <div class="user_reset_label">Reset Password</div>
+                    <form method="post" class="user_reset_form" action="{{ user.reset_action }}">
+                      <input type="hidden" name="username" value="{{ user.username }}" />
+                      <div class="field">
+                        <label>New Password</label>
+                        <input
+                          type="password"
+                          name="new_password"
+                          autocomplete="new-password"
+                          placeholder="New password"
+                          required
+                        />
+                      </div>
+                      <div class="field">
+                        <label>Confirm Password</label>
+                        <input
+                          type="password"
+                          name="confirm_new_password"
+                          autocomplete="new-password"
+                          placeholder="Confirm password"
+                          required
+                        />
+                      </div>
+                      <button class="btn" type="submit">Reset Password</button>
+                    </form>
+                  </div>
+                </article>
+              {% endfor %}
+            </div>
+          {% endif %}
+        </div>
+      </section>
+    </div>
+  </div>
+{% endif %}

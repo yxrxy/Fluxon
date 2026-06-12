@@ -1,0 +1,643 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>p2p_rpc_example init</title>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 16px; }
+    .meta { color: #555; font-size: 12px; margin-bottom: 12px; }
+    #canvas { border: 1px solid #ddd; height: 82vh; overflow: auto; background: #fff; }
+    svg { background: #fff; }
+    .node { cursor: move; }
+    .node rect { stroke: #333; stroke-width: 1; rx: 6; ry: 6; }
+    .node text { font-size: 12px; dominant-baseline: middle; }
+    .edge { stroke: #555; stroke-width: 1; fill: none; }
+    .edge.seq { stroke: #999; stroke-opacity: 0.45; }
+    .node .icon-hit { cursor: pointer; }
+    .node .icon-hit rect { fill: #fff; stroke: #666; stroke-width: 1; rx: 3; ry: 3; }
+    .node .icon-hit.active rect { fill: #222; stroke: #222; }
+    .node .icon-hit path { stroke: #222; stroke-width: 1.5; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+    .node .icon-hit.active path { stroke: #fff; }
+    .node .icon-hit line { stroke: #222; stroke-width: 1.5; stroke-linecap: round; }
+    .node .icon-hit.active line { stroke: #fff; }
+
+    .node.selected rect { stroke: #d97706; stroke-width: 2; }
+    .select-box { fill: rgba(59,130,246,0.12); stroke: #3b82f6; stroke-width: 1; stroke-dasharray: 4,4; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <h2>p2p_rpc_example init</h2>
+  <div class="meta">This page draws three tag-specific init DAGs in one canvas: master:: / owner:: / external::. Steps are duplicated per tag (one copy per tag). Resource nodes are shared across tags and may connect steps from different tags.</div>
+  <pre id="dagviz-status" class="meta" style="display:none"></pre>
+  <div style="display:flex; gap:8px; align-items:center; margin-bottom: 8px;">
+    <button id="reset-layout" type="button">Reset layout</button>
+    <span class="meta">Drag nodes to adjust layout. Box-select to multi-select, then drag to move as a group. Click background to clear selection.</span>
+  </div>
+  <script type="application/json" id="dag-data">{"title":"p2p_rpc_example init","nodes":[{"id":"master::ClusterManager.step.0.construct","kind":"step","tags":["master"],"publish_tags":[],"published_by":null,"module":"master/ClusterManager","order":0,"mode":"Blocking","exec_call":"ClusterManager::construct","doc":"- Construct: ClusterManager (no PostView)\n"},{"id":"master::P2pModule.step.0.construct","kind":"step","tags":["master"],"publish_tags":[],"published_by":null,"module":"master/P2pModule","order":0,"mode":"Blocking","exec_call":"P2pModule::construct","doc":"- Construct: P2pModule (no PostView)\n"},{"id":"master::ChatModule.step.0.construct","kind":"step","tags":["master"],"publish_tags":[],"published_by":null,"module":"master/ChatModule","order":0,"mode":"Blocking","exec_call":"ChatModule::construct","doc":"- Construct: ChatModule (no PostView)\n"},{"id":"master::Framework.step.0.attach_views","kind":"step","tags":["master"],"publish_tags":[],"published_by":null,"module":"master/Framework","order":0,"mode":"Blocking","exec_call":"Framework::init_attach_views","doc":"- 绑定: PostView(运行时View) -> 全部模块\n- 门闩: step.0 构造已完成\n- 注意: 本节点的调度约束不在图中展示"},{"id":"owner::ClusterManager.step.0.construct","kind":"step","tags":["owner"],"publish_tags":[],"published_by":null,"module":"owner/ClusterManager","order":0,"mode":"Blocking","exec_call":"ClusterManager::construct","doc":"- Construct: ClusterManager (no PostView)\n"},{"id":"owner::P2pModule.step.0.construct","kind":"step","tags":["owner"],"publish_tags":[],"published_by":null,"module":"owner/P2pModule","order":0,"mode":"Blocking","exec_call":"P2pModule::construct","doc":"- Construct: P2pModule (no PostView)\n"},{"id":"owner::ChatModule.step.0.construct","kind":"step","tags":["owner"],"publish_tags":[],"published_by":null,"module":"owner/ChatModule","order":0,"mode":"Blocking","exec_call":"ChatModule::construct","doc":"- Construct: ChatModule (no PostView)\n"},{"id":"owner::ClusterManager.step.1.init2","kind":"step","tags":["owner"],"publish_tags":[],"published_by":null,"module":"owner/ClusterManager","order":1,"mode":"Blocking","exec_call":"ClusterManager::init2_for_init_dag","doc":"- Start: cluster member watch\n"},{"id":"owner::P2pModule.step.1.init2","kind":"step","tags":["owner"],"publish_tags":[],"published_by":null,"module":"owner/P2pModule","order":1,"mode":"Blocking","exec_call":"P2pModule::init2_for_init_dag","doc":"- Start: p2p transport + RPC core\n"},{"id":"owner::ChatModule.step.1.init2","kind":"step","tags":["owner"],"publish_tags":[],"published_by":null,"module":"owner/ChatModule","order":1,"mode":"Blocking","exec_call":"ChatModule::init2_for_example","doc":"- Start: chat RPC + background loops\n"},{"id":"owner::Framework.step.0.attach_views","kind":"step","tags":["owner"],"publish_tags":[],"published_by":null,"module":"owner/Framework","order":0,"mode":"Blocking","exec_call":"Framework::init_attach_views","doc":"- 绑定: PostView(运行时View) -> 全部模块\n- 门闩: step.0 构造已完成\n- 注意: 本节点的调度约束不在图中展示"},{"id":"external::ClusterManager.step.0.construct","kind":"step","tags":["external"],"publish_tags":[],"published_by":null,"module":"external/ClusterManager","order":0,"mode":"Blocking","exec_call":"ClusterManager::construct","doc":"- Construct: ClusterManager (no PostView)\n"},{"id":"external::P2pModule.step.0.construct","kind":"step","tags":["external"],"publish_tags":[],"published_by":null,"module":"external/P2pModule","order":0,"mode":"Blocking","exec_call":"P2pModule::construct","doc":"- Construct: P2pModule (no PostView)\n"},{"id":"external::ChatModule.step.0.construct","kind":"step","tags":["external"],"publish_tags":[],"published_by":null,"module":"external/ChatModule","order":0,"mode":"Blocking","exec_call":"ChatModule::construct","doc":"- Construct: ChatModule (no PostView)\n"},{"id":"external::Framework.step.0.attach_views","kind":"step","tags":["external"],"publish_tags":[],"published_by":null,"module":"external/Framework","order":0,"mode":"Blocking","exec_call":"Framework::init_attach_views","doc":"- 绑定: PostView(运行时View) -> 全部模块\n- 门闩: step.0 构造已完成\n- 注意: 本节点的调度约束不在图中展示"}],"edges":[{"from":"owner::ChatModule.step.0.construct","to":"owner::ChatModule.step.1.init2","dash":null,"kind":"seq"},{"from":"owner::ClusterManager.step.0.construct","to":"owner::ClusterManager.step.1.init2","dash":null,"kind":"seq"},{"from":"owner::ClusterManager.step.1.init2","to":"owner::ChatModule.step.1.init2","dash":null,"kind":"dep"},{"from":"owner::ClusterManager.step.1.init2","to":"owner::P2pModule.step.1.init2","dash":null,"kind":"dep"},{"from":"owner::P2pModule.step.0.construct","to":"owner::P2pModule.step.1.init2","dash":null,"kind":"seq"},{"from":"owner::P2pModule.step.1.init2","to":"owner::ChatModule.step.1.init2","dash":null,"kind":"dep"}]}</script>
+  <div id="canvas">
+    <svg id="dag" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arrow" markerWidth="10" markerHeight="10" refX="10" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L10,3 L0,6 Z" fill="#555"></path>
+        </marker>
+      </defs>
+    </svg>
+  </div>
+  <script>
+  (function () {
+    const statusEl = document.getElementById('dagviz-status');
+    function setStatus(msg) {
+      if (!statusEl) return;
+      if (msg) {
+        statusEl.style.display = 'block';
+        statusEl.textContent = msg;
+      } else {
+        statusEl.style.display = 'none';
+        statusEl.textContent = '';
+      }
+    }
+
+    try {
+      setStatus('dagviz: rendering...');
+      const raw = document.getElementById('dag-data').textContent;
+      const data = JSON.parse(raw);
+
+      // Layout constants: keep them explicit and stable for deterministic output.
+      const MARGIN_X = 24;
+      const MARGIN_Y = 24;
+      const LAYER_Y = 120;
+      const COL_X = 360;
+      const NODE_W = 340;
+      const NODE_H = 64;
+      const EDGE_CURVE_C = 120;
+
+      const svg = document.getElementById('dag');
+      const resetBtn = document.getElementById('reset-layout');
+
+      function nodeFill(n) {
+        if (n.kind === 'resource') return '#f3f4f6';
+        if (n.mode === 'AsyncSpawn') return '#eaf9ee';
+        if (n.mode === 'BestEffortWait') return '#fff7e6';
+        return '#e8f1ff';
+      }
+
+      function docPreviewLines(n) {
+        if (!n || !n.doc) return [];
+        const lines = String(n.doc).split(/\r?\n/)
+          .map(s => s.replace(/^\s*[-*]\s*/, '').trim())
+          .filter(s => s.length);
+        // Keep nodes readable in the SVG: show only a short preview in the box.
+        return lines.slice(0, 2).map(s => (s.length > 42 ? (s.slice(0, 42) + '...') : s));
+      }
+
+      function edgeGeom(fromId, toId) {
+        const a = pos.get(fromId);
+        const b = pos.get(toId);
+        if (!a || !b) throw new Error('missing node position for edge: ' + fromId + ' -> ' + toId);
+        const x1 = a.x + NODE_W / 2;
+        const y1 = a.y + NODE_H;
+        const x2 = b.x + NODE_W / 2;
+        const y2 = b.y;
+        const d = `M ${x1} ${y1} C ${x1} ${y1 + EDGE_CURVE_C}, ${x2} ${y2 - EDGE_CURVE_C}, ${x2} ${y2}`;
+        return {d, midX: (x1 + x2) / 2, midY: (y1 + y2) / 2};
+      }
+
+      function fnv1a(str) {
+        let h = 0x811c9dc5;
+        for (let i = 0; i < str.length; i++) {
+          h ^= str.charCodeAt(i);
+          h = (h + (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24)) >>> 0;
+        }
+        return ('00000000' + h.toString(16)).slice(-8);
+      }
+
+      const storageKey = 'fluxon_dagviz_layout:' + fnv1a(raw) + ':three_tags_shared_resources';
+      const uiKey = storageKey + ':ui';
+
+      function loadLayout() {
+        const s = localStorage.getItem(storageKey);
+        if (!s) return null;
+        try {
+          const obj = JSON.parse(s);
+          if (!obj || typeof obj !== 'object') throw new Error('layout is not an object');
+          return obj;
+        } catch (_) {
+          localStorage.removeItem(storageKey);
+          return null;
+        }
+      }
+
+      function saveLayout(pos) {
+        const out = {};
+        for (const [id, p] of pos.entries()) out[id] = {x: p.x, y: p.y};
+        localStorage.setItem(storageKey, JSON.stringify(out));
+      }
+
+      function loadUiState() {
+        const s = localStorage.getItem(uiKey);
+        if (!s) return null;
+        try {
+          const obj = JSON.parse(s);
+          if (!obj || typeof obj !== 'object') throw new Error('ui is not an object');
+          if (obj.focusId != null && typeof obj.focusId !== 'string') throw new Error('focusId invalid');
+          if (obj.muteEdgeNodes != null && !Array.isArray(obj.muteEdgeNodes)) throw new Error('muteEdgeNodes invalid');
+          return { focusId: obj.focusId || null, muteEdgeNodes: new Set(obj.muteEdgeNodes || []) };
+        } catch (_) {
+          localStorage.removeItem(uiKey);
+          return null;
+        }
+      }
+
+      function saveUiState(ui) {
+        const out = { focusId: ui.focusId, muteEdgeNodes: Array.from(ui.muteEdgeNodes) };
+        localStorage.setItem(uiKey, JSON.stringify(out));
+      }
+
+      function clientToSvg(clientX, clientY) {
+        const pt = svg.createSVGPoint();
+        pt.x = clientX;
+        pt.y = clientY;
+        const ctm = svg.getScreenCTM();
+        if (!ctm) throw new Error('svg has no screen CTM');
+        return pt.matrixTransform(ctm.inverse());
+      }
+
+      const nodes = new Map();
+      for (const n of data.nodes) nodes.set(n.id, n);
+
+      const out = new Map();
+      const inb = new Map();
+      const indeg = new Map();
+      for (const id of nodes.keys()) { out.set(id, []); inb.set(id, []); indeg.set(id, 0); }
+      for (const e of data.edges) {
+        out.get(e.from).push(e.to);
+        inb.get(e.to).push(e.from);
+        indeg.set(e.to, indeg.get(e.to) + 1);
+      }
+
+      const q = [];
+      for (const [id, d] of indeg.entries()) if (d === 0) q.push(id);
+      q.sort();
+      const topo = [];
+      while (q.length) {
+        const u = q.shift();
+        topo.push(u);
+        const outs = out.get(u) || [];
+        for (const v of outs) {
+          indeg.set(v, indeg.get(v) - 1);
+          if (indeg.get(v) === 0) {
+            q.push(v);
+            q.sort();
+          }
+        }
+      }
+
+      const defaultPos = new Map();
+      const pos = new Map();
+      const layout = loadLayout();
+
+      function placeDefault() {
+        const colOf = new Map();
+        const colIndex = new Map();
+        let nextCol = 0;
+
+        function moduleKey(n) {
+          if (n.kind === 'resource') return n.module || 'Resource';
+          return n.module || 'Unknown';
+        }
+
+        for (const id of topo) {
+          const n = nodes.get(id);
+          const mk = moduleKey(n);
+          if (!colIndex.has(mk)) {
+            colIndex.set(mk, nextCol);
+            nextCol += 1;
+          }
+          colOf.set(id, colIndex.get(mk));
+        }
+
+        const layerOf = new Map();
+        for (const id of topo) {
+          let maxPred = -1;
+          for (const p of (inb.get(id) || [])) {
+            const lp = layerOf.get(p);
+            if (lp != null && lp > maxPred) maxPred = lp;
+          }
+          layerOf.set(id, maxPred + 1);
+        }
+
+        for (const id of topo) {
+          const col = colOf.get(id) || 0;
+          const layer = layerOf.get(id) || 0;
+          const x = MARGIN_X + col * COL_X;
+          const y = MARGIN_Y + layer * LAYER_Y;
+          defaultPos.set(id, {x, y});
+        }
+      }
+
+      placeDefault();
+
+      if (layout) {
+        for (const id of topo) {
+          const p = layout[id];
+          if (p && typeof p.x === 'number' && typeof p.y === 'number') pos.set(id, {x: p.x, y: p.y});
+          else {
+            const dp = defaultPos.get(id);
+            pos.set(id, {x: dp.x, y: dp.y});
+          }
+        }
+      } else {
+        for (const id of topo) {
+          const dp = defaultPos.get(id);
+          pos.set(id, {x: dp.x, y: dp.y});
+        }
+      }
+
+      // Draw edges first (so nodes are on top).
+      const edgeItems = [];
+      for (const e of data.edges) {
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('class', 'edge ' + e.kind);
+        path.setAttribute('marker-end', 'url(#arrow)');
+        if (e.dash) {
+          path.setAttribute('stroke-dasharray', e.dash);
+        }
+        svg.appendChild(path);
+        edgeItems.push({from: e.from, to: e.to, kind: e.kind, path});
+      }
+
+      const nodeItems = new Map();
+      const focusIcons = new Map();
+      const muteIcons = new Map();
+
+      function mkIcon(kind, x, y) {
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        g.setAttribute('class', 'icon-hit');
+        g.setAttribute('data-kind', kind);
+        g.setAttribute('transform', `translate(${x},${y})`);
+
+        const r = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        r.setAttribute('x', 0);
+        r.setAttribute('y', 0);
+        r.setAttribute('width', 14);
+        r.setAttribute('height', 14);
+        g.appendChild(r);
+
+        if (kind === 'focus') {
+          const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          p.setAttribute('d', 'M4,6 a3,3 0 1,1 6,0 a3,3 0 1,1 -6,0 M9,10 L12,13');
+          g.appendChild(p);
+        } else if (kind === 'mute') {
+          const l1 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+          l1.setAttribute('x1', 3);
+          l1.setAttribute('y1', 3);
+          l1.setAttribute('x2', 11);
+          l1.setAttribute('y2', 11);
+          g.appendChild(l1);
+          const l2 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+          l2.setAttribute('x1', 11);
+          l2.setAttribute('y1', 3);
+          l2.setAttribute('x2', 3);
+          l2.setAttribute('y2', 11);
+          g.appendChild(l2);
+        }
+        return g;
+      }
+
+      for (const id of topo) {
+        const n = nodes.get(id);
+        const p = pos.get(id);
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        g.setAttribute('class', 'node');
+        g.setAttribute('data-id', id);
+        g.setAttribute('transform', `translate(${p.x},${p.y})`);
+
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        rect.setAttribute('x', 0);
+        rect.setAttribute('y', 0);
+        rect.setAttribute('width', NODE_W);
+        rect.setAttribute('height', NODE_H);
+        rect.setAttribute('fill', nodeFill(n));
+        g.appendChild(rect);
+
+        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        text.setAttribute('x', 8);
+        text.setAttribute('y', 6);
+        text.setAttribute('dominant-baseline', 'hanging');
+
+        const t0 = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+        t0.setAttribute('x', '8');
+        t0.setAttribute('dy', '0');
+        t0.setAttribute('font-weight', '600');
+        t0.textContent = id;
+        text.appendChild(t0);
+
+        const preview = docPreviewLines(n);
+        for (let i = 0; i < preview.length; i++) {
+          const t = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+          t.setAttribute('x', '8');
+          t.setAttribute('dy', '14');
+          t.setAttribute('font-size', '11');
+          t.textContent = preview[i];
+          text.appendChild(t);
+        }
+
+        g.appendChild(text);
+
+        const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+        const mode = n.mode ? ('mode: ' + n.mode + '\n') : '';
+        const module = n.module ? ('module: ' + n.module + '\n') : '';
+        const call = n.exec_call ? ('exec: ' + n.exec_call + '\n') : '';
+        title.textContent = mode + module + call + '\n' + (n.doc || '');
+        g.appendChild(title);
+
+        const focus = mkIcon('focus', NODE_W - 36, 6);
+        const mute = mkIcon('mute', NODE_W - 18, 6);
+        g.appendChild(focus);
+        g.appendChild(mute);
+        focusIcons.set(id, focus);
+        muteIcons.set(id, mute);
+
+        svg.appendChild(g);
+        nodeItems.set(id, g);
+      }
+
+      function updateNode(id) {
+        const p = pos.get(id);
+        const g = nodeItems.get(id);
+        if (p && g) g.setAttribute('transform', `translate(${p.x},${p.y})`);
+      }
+
+      function updateAllEdges() {
+        for (const e of edgeItems) {
+          const geom = edgeGeom(e.from, e.to);
+          e.path.setAttribute('d', geom.d);
+        }
+      }
+
+      function resizeSvgToFit() {
+        let maxX = 0;
+        let maxY = 0;
+        for (const p of pos.values()) {
+          maxX = Math.max(maxX, p.x + NODE_W + MARGIN_X);
+          maxY = Math.max(maxY, p.y + NODE_H + MARGIN_Y);
+        }
+        svg.setAttribute('width', maxX);
+        svg.setAttribute('height', maxY);
+      }
+
+      const uiLoaded = loadUiState();
+      const ui = uiLoaded || { focusId: null, muteEdgeNodes: new Set() };
+
+      if (ui.focusId && !nodes.has(ui.focusId)) {
+        ui.focusId = null;
+        saveUiState(ui);
+      }
+
+      const selected = new Set();
+      let suppressNextBackgroundClick = false;
+      let selecting = null;
+
+      function syncSelectionStyles() {
+        for (const [id, g] of nodeItems.entries()) {
+          if (selected.has(id)) g.classList.add('selected');
+          else g.classList.remove('selected');
+        }
+      }
+
+      function clearSelection() {
+        if (selected.size === 0) return;
+        selected.clear();
+        syncSelectionStyles();
+      }
+
+      function computeChain(focusId) {
+        const seen = new Set();
+        const stack = [focusId];
+        while (stack.length) {
+          const x = stack.pop();
+          if (seen.has(x)) continue;
+          seen.add(x);
+          for (const p of (inb.get(x) || [])) stack.push(p);
+          for (const c of (out.get(x) || [])) stack.push(c);
+        }
+        return seen;
+      }
+
+      function applyVisibility() {
+        const chain = ui.focusId ? computeChain(ui.focusId) : null;
+        for (const [id, g] of nodeItems.entries()) {
+          const hidden = (chain && !chain.has(id));
+          g.style.display = hidden ? 'none' : '';
+        }
+
+        for (const e of edgeItems) {
+          const mute = ui.muteEdgeNodes.has(e.from) || ui.muteEdgeNodes.has(e.to);
+          const hidden = (chain && (!chain.has(e.from) || !chain.has(e.to))) || mute;
+          e.path.style.display = hidden ? 'none' : '';
+        }
+
+        for (const [id, ic] of focusIcons.entries()) {
+          if (ui.focusId === id) ic.classList.add('active');
+          else ic.classList.remove('active');
+        }
+        for (const [id, ic] of muteIcons.entries()) {
+          if (ui.muteEdgeNodes.has(id)) ic.classList.add('active');
+          else ic.classList.remove('active');
+        }
+
+        syncSelectionStyles();
+      }
+
+      let drag = null;
+
+      function onPointerDown(ev) {
+        const id = ev.currentTarget.getAttribute('data-id');
+        if (!id) return;
+
+        // Ignore drag start when clicking the node's small UI icons.
+        let t = ev.target;
+        while (t && t !== ev.currentTarget) {
+          if (t.classList && t.classList.contains('icon-hit')) return;
+          t = t.parentNode;
+        }
+
+        // Clicking an unselected node collapses selection to that node.
+        if (!selected.has(id)) {
+          selected.clear();
+          selected.add(id);
+          syncSelectionStyles();
+        }
+
+        const start = clientToSvg(ev.clientX, ev.clientY);
+        const ids = Array.from(selected);
+        const orig = new Map();
+        for (const sid of ids) {
+          const p = pos.get(sid);
+          orig.set(sid, {x: p.x, y: p.y});
+        }
+        drag = { ids, pointerId: ev.pointerId, start, orig };
+        ev.currentTarget.setPointerCapture(ev.pointerId);
+      }
+
+      function onPointerMove(ev) {
+        if (!drag) return;
+        if (ev.pointerId !== drag.pointerId) return;
+        const cur = clientToSvg(ev.clientX, ev.clientY);
+        const dx = cur.x - drag.start.x;
+        const dy = cur.y - drag.start.y;
+        for (const sid of drag.ids) {
+          const o = drag.orig.get(sid);
+          pos.set(sid, {x: o.x + dx, y: o.y + dy});
+          updateNode(sid);
+        }
+        updateAllEdges();
+        resizeSvgToFit();
+      }
+
+      function onPointerUp(ev) {
+        if (!drag) return;
+        if (ev.pointerId !== drag.pointerId) return;
+        saveLayout(pos);
+        drag = null;
+      }
+
+      for (const g of nodeItems.values()) {
+        g.addEventListener('pointerdown', onPointerDown);
+        g.addEventListener('pointermove', onPointerMove);
+        g.addEventListener('pointerup', onPointerUp);
+        g.addEventListener('pointercancel', onPointerUp);
+      }
+
+      function isBackgroundEventTarget(ev) {
+        if (!ev || !ev.target) return true;
+        if (ev.target.closest) {
+          if (ev.target.closest('.icon-hit')) return false;
+          if (ev.target.closest('.node')) return false;
+        }
+        return true;
+      }
+
+      svg.addEventListener('pointerdown', function (ev) {
+        if (!isBackgroundEventTarget(ev)) return;
+        if (ev.button !== 0) return;
+
+        selecting = { pointerId: ev.pointerId, start: clientToSvg(ev.clientX, ev.clientY), rect: null };
+        const r = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        r.setAttribute('class', 'select-box');
+        r.setAttribute('x', selecting.start.x);
+        r.setAttribute('y', selecting.start.y);
+        r.setAttribute('width', 0);
+        r.setAttribute('height', 0);
+        svg.appendChild(r);
+        selecting.rect = r;
+        svg.setPointerCapture(ev.pointerId);
+        ev.preventDefault();
+      });
+
+      svg.addEventListener('pointermove', function (ev) {
+        if (!selecting) return;
+        if (ev.pointerId !== selecting.pointerId) return;
+        const cur = clientToSvg(ev.clientX, ev.clientY);
+        const x1 = Math.min(selecting.start.x, cur.x);
+        const y1 = Math.min(selecting.start.y, cur.y);
+        const x2 = Math.max(selecting.start.x, cur.x);
+        const y2 = Math.max(selecting.start.y, cur.y);
+
+        selecting.rect.setAttribute('x', x1);
+        selecting.rect.setAttribute('y', y1);
+        selecting.rect.setAttribute('width', x2 - x1);
+        selecting.rect.setAttribute('height', y2 - y1);
+
+        selected.clear();
+        for (const [id, g] of nodeItems.entries()) {
+          if (g.style.display === 'none') continue;
+          const p = pos.get(id);
+          const nx1 = p.x;
+          const ny1 = p.y;
+          const nx2 = p.x + NODE_W;
+          const ny2 = p.y + NODE_H;
+          const overlap = !(nx2 < x1 || nx1 > x2 || ny2 < y1 || ny1 > y2);
+          if (overlap) selected.add(id);
+        }
+        syncSelectionStyles();
+        ev.preventDefault();
+      });
+
+      function endSelecting(ev) {
+        if (!selecting) return;
+        if (ev.pointerId !== selecting.pointerId) return;
+        if (selecting.rect && selecting.rect.parentNode) selecting.rect.parentNode.removeChild(selecting.rect);
+        selecting = null;
+        suppressNextBackgroundClick = true;
+      }
+
+      svg.addEventListener('pointerup', endSelecting);
+      svg.addEventListener('pointercancel', endSelecting);
+
+      svg.addEventListener('click', function (ev) {
+        if (!isBackgroundEventTarget(ev)) return;
+        if (suppressNextBackgroundClick) {
+          suppressNextBackgroundClick = false;
+          return;
+        }
+        clearSelection();
+      });
+
+      function onIconClick(ev) {
+        ev.stopPropagation();
+        ev.preventDefault();
+        const nodeId = ev.currentTarget.parentNode.getAttribute('data-id');
+        const kind = ev.currentTarget.getAttribute('data-kind');
+        if (!nodeId || !kind) return;
+        if (kind === 'focus') {
+          ui.focusId = (ui.focusId === nodeId) ? null : nodeId;
+        } else if (kind === 'mute') {
+          if (ui.muteEdgeNodes.has(nodeId)) ui.muteEdgeNodes.delete(nodeId);
+          else ui.muteEdgeNodes.add(nodeId);
+        } else {
+          return;
+        }
+        saveUiState(ui);
+        applyVisibility();
+      }
+
+      for (const ic of focusIcons.values()) {
+        ic.addEventListener('pointerdown', (ev) => { ev.stopPropagation(); });
+        ic.addEventListener('click', onIconClick);
+      }
+      for (const ic of muteIcons.values()) {
+        ic.addEventListener('pointerdown', (ev) => { ev.stopPropagation(); });
+        ic.addEventListener('click', onIconClick);
+      }
+
+      resetBtn.addEventListener('click', function () {
+        localStorage.removeItem(storageKey);
+        localStorage.removeItem(uiKey);
+        ui.focusId = null;
+        ui.muteEdgeNodes = new Set();
+        selected.clear();
+        syncSelectionStyles();
+        for (const [id, p] of defaultPos.entries()) pos.set(id, {x: p.x, y: p.y});
+        for (const id of topo) updateNode(id);
+        updateAllEdges();
+        applyVisibility();
+        resizeSvgToFit();
+      });
+
+      updateAllEdges();
+      applyVisibility();
+      resizeSvgToFit();
+
+      setStatus('');
+    } catch (e) {
+      const msg = (e && e.stack) ? e.stack : String(e);
+      // Avoid embedding raw newlines in JS string literals (easy to break during template edits).
+      setStatus(['dagviz render error:', msg].join('\n'));
+      throw e;
+    }
+  })();
+  </script>
+</body>
+</html>

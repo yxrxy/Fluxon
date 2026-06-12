@@ -1,0 +1,56 @@
+version: 3
+title: cluster_manager_test init
+
+resources: []
+
+module_tags:
+  ClusterManager: [owner]
+  TestClusterModule: [owner]
+
+steps:
+  - id: ClusterManager.step.0.construct
+    module: ClusterManager
+    mode: Blocking
+    deps: []
+    doc: |
+      - Construct: ClusterManager (no PostView)
+    exec:
+      kind: Construct
+      call: "ClusterManager::construct"
+      arg_field: "cluster_manager_arg"
+    best_effort: null
+
+  - id: TestClusterModule.step.0.construct
+    module: TestClusterModule
+    mode: Blocking
+    deps: []
+    doc: |
+      - Construct: TestClusterModule (no PostView)
+    exec:
+      kind: Construct
+      call: "TestClusterModule::construct"
+      arg_field: "test_cluster_module_arg"
+    best_effort: null
+
+  - id: ClusterManager.step.1.init2
+    module: ClusterManager
+    mode: Blocking
+    deps: []
+    doc: |
+      - Start: cluster member watch
+    exec:
+      kind: Call
+      call: "ClusterManager::init2_for_init_dag"
+    best_effort: null
+
+  - id: TestClusterModule.step.1.init2
+    module: TestClusterModule
+    mode: Blocking
+    deps:
+      - ClusterManager.step.1.init2
+    doc: |
+      - Start: test event listeners
+    exec:
+      kind: Call
+      call: "TestClusterModule::init2_for_test"
+    best_effort: null

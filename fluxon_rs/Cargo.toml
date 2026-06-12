@@ -1,0 +1,89 @@
+[workspace]
+members = [
+    "fluxon_commu_contract",
+    "fluxon_commu_closed_sdk_consumer",
+    "fluxon_commu",
+    "fluxon_kv",
+    "fluxon_util",
+    "fluxon_observability",
+    "fluxon_fs",
+    "fluxon_fs_core",
+    "fluxon_fs_s3_gateway",
+    "fluxon_framework",
+    "fluxon_framework_compiled",
+    "fluxon_pyo3",
+    "fluxon_cli",
+    "limit_thirdparty",
+    "fluxon_mq",
+    "fluxon_ops",
+    "fluxon_proxy_proto",
+    "fluxon_proxy",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.2.1"
+edition = "2024"
+license = ""
+authors = ["teleai_infra"]
+homepage = ""
+repository = ""
+readme = "README"
+
+[profile.dev]
+debug = false
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+thiserror = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1.0", features = ["v4"] }
+async-trait = "0.1"
+clap = { version = "4.0", features = ["derive"] }
+tonic = "0.10"
+prost = "0.12"
+prost-types = "0.12"
+futures = "0.3"
+parking_lot = "0.12"
+dashmap = "6.1.0"
+num_cpus = "1.0"
+hyper = { version = "0.14", features = ["full"] }
+chrono = { version = "0.4", features = ["serde"] }
+tokio = { version = "1.0", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["full"] }
+async-stream = "0.3"
+paste = "1.0"
+tonic-build = "0.10" 
+qp2p = "0.36.4" 
+bitcode = "=0.6.6"
+#bitcode = { path = "./bitcode" }
+rand = "0.8"
+downcast-rs = "2.0.1"
+lazy_static = "1.4"
+bytes = { version = "1.10.1", features = ["serde"] }
+once_cell = "1.21.3"
+oneshot = "0.1.11"
+postcard = { version = "1.1.3", features = ["alloc", "use-std"] }
+smallvec = { version = "1.15.1", features = ["serde", "union"] }
+syscalls = "0.7.0"
+mockall = "0.13.1"
+bincode = "2.0.1"
+bindgen = "0.72.1"
+cc = "1.2.44"
+local-ip-address = "0.6.5"
+etcd-client = "0.12.0"
+# moka = { version = "0.12.7", features = ["future", "sync"] }
+# forked moka: based on moka 0.12.7, adding dynamic capacity support
+moka ={ path="./moka" , features = ["future", "sync"] }
+serde_yaml = "0.9"
+libc = "0.2"
+tempfile = "3"
+crossbeam-channel = "0.5.15"
+crossbeam-utils = "0.8.21"
+tree-sitter = "0.22"
+tree-sitter-rust = "0.21"
+pulldown-cmark = "0.12"
+askama = "0.12"

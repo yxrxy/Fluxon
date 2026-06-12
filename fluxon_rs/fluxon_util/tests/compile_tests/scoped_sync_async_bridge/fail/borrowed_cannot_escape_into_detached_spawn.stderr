@@ -1,0 +1,21 @@
+error[E0597]: `owner` does not live long enough
+ --> tests/compile_tests/scoped_sync_async_bridge/fail/borrowed_cannot_escape_into_detached_spawn.rs:7:40
+  |
+  6 |       let owner = Arc::new(String::from("borrowed-state"));
+    |           ----- binding `owner` declared here
+  7 |       let borrowed = borrow_stable_owner(&owner);
+    |                                          ^^^^^^ borrowed value does not live long enough
+  8 |
+  9 |       let _join = tokio::spawn(async move {
+    |  _________________-
+ 10 | |         let _ = borrowed.len();
+ 11 | |     });
+    | |______- argument requires that `owner` is borrowed for `'static`
+ 12 |   }
+    |   - `owner` dropped here while still borrowed
+    |
+note: requirement that the value outlives `'static` introduced here
+   --> $CARGO/tokio-1.49.0/src/task/spawn.rs
+    |
+    |         F: Future + Send + 'static,
+    |                            ^^^^^^^

@@ -1,0 +1,147 @@
+<section class="users_panel fs_master_panel_full">
+  <div class="users_panel_head">
+    <div>
+      <div class="users_panel_eyebrow">Export Manager</div>
+      <h2 class="users_panel_title">Manage Exports</h2>
+      <div class="users_panel_desc">
+        This merged view hides config layering. Operators only see what each online agent should expose
+        now, can remove existing exports, and can add a new export by browsing a path on that agent.
+      </div>
+    </div>
+  </div>
+
+  <div class="users_panel_body">
+    {% if show_empty_agents %}
+      <div class="mono muted">(no online agents)</div>
+    {% else %}
+      <div class="fs_master_agent_grid">
+        {% for agent in agents %}
+          <article class="fs_master_agent_card">
+            <div class="fs_master_agent_card_head">
+              <div>
+                <div class="fs_master_agent_name mono">{{ agent.agent_instance_key }}</div>
+                <div class="hint">managed exports: {{ agent.managed_exports_count }}</div>
+              </div>
+              <button class="btn primary" type="button" data-fs-master-add-export="{{ agent.agent_instance_key }}">
+                Add Export
+              </button>
+            </div>
+
+            <div class="fs_master_agent_table_shell">
+              <table class="fs_master_agent_table">
+                <thead>
+                  <tr>
+                    <th>export_name</th>
+                    <th>remote_root_dir_abs</th>
+                    <th style="text-align:right">action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% if agent.show_empty_managed_exports %}
+                    <tr>
+                      <td colspan="3" class="mono muted">(none)</td>
+                    </tr>
+                  {% else %}
+                    {% for record in agent.managed_exports %}
+                      <tr>
+                        <td>
+                          <span class="mono fs_master_agent_table_value">{{ record.export_name }}</span>
+                        </td>
+                        <td>
+                          <span class="mono fs_master_agent_table_value">{{ record.remote_root_dir_abs }}</span>
+                        </td>
+                        <td style="text-align:right">
+                          <form class="fs_master_icon_form" method="post" action="{{ record.remove_action }}">
+                            <input type="hidden" name="agent_instance_key" value="{{ record.agent_instance_key }}" />
+                            <input type="hidden" name="export_name" value="{{ record.export_name }}" />
+                            <button
+                              class="btn action_icon_btn danger"
+                              type="submit"
+                              title="Remove Export"
+                              aria-label="Remove Export"
+                              onclick="return confirm('Remove this export?');"
+                            >
+                              {{ record.remove_icon_html|safe }}
+                            </button>
+                          </form>
+                        </td>
+                      </tr>
+                    {% endfor %}
+                  {% endif %}
+                </tbody>
+              </table>
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+
+  <div
+    id="fs_master_export_modal"
+    class="modal_backdrop"
+    onclick="if(event.target===this){__fluxonUiClose('fs_master_export_modal');}"
+  >
+    <div class="modal fs_master_export_modal">
+      <div class="modal_head">
+        <div>
+          <strong>Add Export</strong>
+          <div class="hint">Select an agent-visible directory first, then set the export name.</div>
+        </div>
+        <button class="btn" type="button" onclick="__fluxonUiClose('fs_master_export_modal')">Close</button>
+      </div>
+
+      <form
+        id="fs_master_export_form"
+        class="modal_body"
+        method="post"
+        action="{{ add_action }}"
+        data-browse-href="{{ browse_href }}"
+      >
+        <input id="fs_master_export_agent_input" type="hidden" name="agent_instance_key" />
+        <input id="fs_master_export_path_input" type="hidden" name="remote_root_dir_abs" />
+
+        <div class="users_form_grid">
+          <div class="field">
+            <label>Agent</label>
+            <div id="fs_master_export_agent_view" class="mono muted"></div>
+          </div>
+          <div class="field">
+            <label>Export Name</label>
+            <input
+              id="fs_master_export_name_input"
+              type="text"
+              name="export_name"
+              placeholder="e.g. fluxon-release"
+              required
+            />
+          </div>
+          <div class="field full">
+            <label>Selected Path</label>
+            <div id="fs_master_export_path_view" class="mono muted">/</div>
+          </div>
+        </div>
+
+        <div class="fs_master_browse_shell">
+          <div class="fs_master_browse_head">
+            <div class="fs_master_browse_actions">
+              <button id="fs_master_browse_root_btn" class="btn" type="button">Root</button>
+              <button id="fs_master_browse_up_btn" class="btn" type="button">Up</button>
+            </div>
+            <div class="hint">The current directory is the selected export root. Click folders to enter them.</div>
+          </div>
+          <div id="fs_master_browse_dir_view" class="mono fs_master_browse_path">/</div>
+          <div id="fs_master_browse_status" class="hint fs_master_browse_status"></div>
+          <div id="fs_master_browse_entries" class="fs_master_browse_entries"></div>
+        </div>
+
+        <div class="modal_foot">
+          <button class="btn" type="button" onclick="__fluxonUiClose('fs_master_export_modal')">
+            Cancel
+          </button>
+          <button class="btn primary" type="submit">Add Export</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</section>

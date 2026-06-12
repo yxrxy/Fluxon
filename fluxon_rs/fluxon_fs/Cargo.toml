@@ -1,0 +1,46 @@
+[package]
+name = "fluxon_fs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+readme.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true
+serde_yaml.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+parking_lot.workspace = true
+tokio.workspace = true
+futures.workspace = true
+dashmap.workspace = true
+libc = "0.2"
+axum = { version = "0.6.20", features = ["multipart"] }
+etcd-client = { workspace = true }
+urlencoding = "2"
+sha2 = "0.10"
+hex = "0.4"
+hashbrown = "0.15"
+equivalent = "1.0"
+async-trait.workspace = true
+paste.workspace = true
+chrono.workspace = true
+bitcode = { workspace = true }
+prost = { workspace = true }
+uuid.workspace = true
+fluxon_kv = { path = "../fluxon_kv", default-features = false }
+fluxon_commu = { path = "../fluxon_commu" }
+fluxon_util = { path = "../fluxon_util" }
+fluxon_fs_core = { path = "../fluxon_fs_core" }
+fluxon_framework = { path = "../fluxon_framework" }
+fluxon_framework_compiled = { path = "../fluxon_framework_compiled" }
+fluxon_fs_s3_gateway = { path = "../fluxon_fs_s3_gateway" }
+limit_thirdparty = { path = "../limit_thirdparty" }
+
+[dev-dependencies]
+tempfile.workspace = true

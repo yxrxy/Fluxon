@@ -1,0 +1,10 @@
+contribute_to_cluster_pool_size:
+  dram: 16777216
+  vram: {}
+instance_key: test_instance
+mooncake_spec:
+  etcd_addresses:
+  - localhost:2379
+  local_buffer_size: 16777216
+  master_server_address: localhost:8081
+  metadata_server: http://localhost:8080/metadata

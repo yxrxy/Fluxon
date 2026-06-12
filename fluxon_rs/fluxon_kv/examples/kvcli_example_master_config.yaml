@@ -1,0 +1,8 @@
+# Example master configuration for FluxonKV
+instance_key: "master_node"
+cluster_name: "cluster_001"
+port: 50057
+etcd_endpoints: ["127.0.0.1:2379"]
+
+# Optional: Additional configurations can be added here
+# custom_field: "value"

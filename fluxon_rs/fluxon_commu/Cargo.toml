@@ -1,0 +1,39 @@
+[package]
+name = "fluxon_commu"
+version = "0.2.1"
+edition = "2024"
+build = "build.rs"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[features]
+cluster_manager_app_logic_ext = []
+fastws_transport = []
+sockudo_ws_transport = []
+tcp_transport = []
+tcp_thread_transport = []
+tquic_transport = []
+tquic_transport_v2 = ["tquic_transport"]
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+bitcode = { workspace = true }
+bytes = { workspace = true }
+crossbeam = "0.8"
+etcd-client = { workspace = true }
+fluxon_commu_contract = { path = "../fluxon_commu_contract" }
+fluxon_commu_closed_sdk_consumer = { path = "../fluxon_commu_closed_sdk_consumer" }
+fluxon_framework = { path = "../fluxon_framework" }
+fluxon_framework_compiled = { path = "../fluxon_framework_compiled" }
+fluxon_observability = { path = "../fluxon_observability" }
+fluxon_util = { path = "../fluxon_util" }
+libc = { workspace = true }
+limit_thirdparty = { path = "../limit_thirdparty" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+paste = "1.0"

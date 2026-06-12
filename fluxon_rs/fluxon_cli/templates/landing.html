@@ -1,0 +1,30 @@
+{% extends "layout.html" %}
+
+{% block title %}Fluxon{% endblock %}
+
+{% block body %}
+<h1>Fluxon</h1>
+<div class="muted">Select cluster view or panel (no defaults).</div>
+{% if clusters.is_empty() %}
+  <div class="row">No clusters discovered from etcd.</div>
+{% else %}
+  {% for c in clusters %}
+    <div class="card row">
+      <div>cluster: <span class="mono">{{ c.name }}</span></div>
+      <div>views:
+        {% for k in member_kinds %}
+          {% if loop.index0 > 0 %} | {% endif %}
+          <a href="/view?cluster_name={{ c.encoded }}&member_kind={{ k.query }}">{{ k.display }}</a>
+        {% endfor %}
+        | <a href="/topology?cluster_name={{ c.encoded }}">topology</a>
+      </div>
+      <div>panels:
+        {% for p in panels %}
+          {% if loop.index0 > 0 %} | {% endif %}
+          <a href="/r/{{ p.service_name }}/{{ c.encoded }}/">{{ p.display }}</a>
+        {% endfor %}
+      </div>
+    </div>
+  {% endfor %}
+{% endif %}
+{% endblock %}

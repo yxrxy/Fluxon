@@ -1,0 +1,483 @@
+schema_version: 9
+
+run:
+  mode: full_once
+  selectors:
+    case_ids: ALL
+    profile_ids: [fluxon_fastws, fluxon_tquic, fluxon_sockudo_ws, fluxon_tcp, redis_sharded, alluxio_posix]
+    command_ids: ALL
+    test_ids: ALL
+
+scenes:
+  kv_read_heavy_zipf:
+    test_stack:
+      mode: KVSTORE
+      read_ratio: 0.9
+      write_ratio: 0.1
+      request_distribution: zipfian
+      keyspace_size: 512
+      value_size_mode: RANDOM_WEIGHTED_SET
+      value_size_weighted_set:
+        - size_bytes: 10485760
+          weight: 0.25
+        - size_bytes: 16777216
+          weight: 0.25
+        - size_bytes: 25165824
+          weight: 0.25
+        - size_bytes: 31457280
+          weight: 0.25
+    select:
+      scales: [n1_kvowner_dram_20gib, n2_kvowner_dram_20gib, n5_kvowner_dram_20gib, n9_kvowner_dram_20gib]
+      profiles: [fluxon_fastws, fluxon_tquic, fluxon_sockudo_ws, fluxon_tcp, redis_sharded]
+
+  kv_read_heavy_affinity:
+    test_stack:
+      mode: KVSTORE
+      read_ratio: 0.9
+      write_ratio: 0.1
+      request_distribution: zipfian
+      affinity_locality_ratio: 0.85
+      keyspace_size: 512
+      value_size_mode: RANDOM_WEIGHTED_SET
+      value_size_weighted_set:
+        - size_bytes: 10485760
+          weight: 0.25
+        - size_bytes: 16777216
+          weight: 0.25
+        - size_bytes: 25165824
+          weight: 0.25
+        - size_bytes: 31457280
+          weight: 0.25
+    select:
+      scales: [n2_kvowner_dram_20gib, n5_kvowner_dram_20gib, n9_kvowner_dram_20gib]
+      profiles: [fluxon_fastws, fluxon_tquic, fluxon_sockudo_ws, fluxon_tcp, redis_sharded]
+
+  kv_write_heavy_large_value:
+    test_stack:
+      mode: KVSTORE
+      read_ratio: 0.0
+      write_ratio: 1.0
+      request_distribution: uniform
+      keyspace_size: 10000
+      value_size_mode: RANDOM_WEIGHTED_SET
+      value_size_weighted_set:
+        - size_bytes: 10000
+          weight: 0.2
+        - size_bytes: 100000
+          weight: 0.2
+        - size_bytes: 1000000
+          weight: 0.2
+        - size_bytes: 10000000
+          weight: 0.2
+        - size_bytes: 50000000
+          weight: 0.2
+    select:
+      scales: [n1_kvowner_dram_20gib, n2_kvowner_dram_20gib, n5_kvowner_dram_20gib, n9_kvowner_dram_20gib]
+      profiles: [fluxon_fastws, fluxon_tquic, fluxon_sockudo_ws, fluxon_tcp, redis_sharded]
+
+  rpc_echo_small_payload:
+    test_stack:
+      mode: RPC
+      rpc_backend_kind: FLUXON
+      rpc_path: /bench/echo
+      rpc_payload_size: 4096
+      rpc_payload_mode: BYTES
+      rpc_server_source: benchmark_node_role
+      rpc_target_role: seed
+      read_ratio: 1.0
+      write_ratio: 0.0
+      request_distribution: uniform
+      keyspace_size: 1
+    select:
+      scales: [n1_kvowner_dram_20gib, n2_kvowner_dram_20gib]
+      profiles: [fluxon_fastws, fluxon_tquic, fluxon_sockudo_ws, fluxon_tcp]
+
+  rpc_echo_small_payload_zerorpc:
+    test_stack:
+      mode: RPC
+      rpc_backend_kind: ZERORPC
+      rpc_path: /bench/echo
+      rpc_payload_size: 4096
+      rpc_payload_mode: BYTES
+      rpc_server_source: benchmark_node_role
+      rpc_target_role: seed
+      zerorpc_port_base: 29779
+      zerorpc_port_stride: 20
+      read_ratio: 1.0
+      write_ratio: 0.0
+      request_distribution: uniform
+      keyspace_size: 1
+    select:
+      scales: [n1_kvowner_dram_20gib, n2_kvowner_dram_20gib]
+      profiles: [fluxon_fastws, fluxon_tquic, fluxon_sockudo_ws, fluxon_tcp]
+
+  fs_open_read_close_smallfiles:
+    test_stack:
+      mode: PY_FS
+      file_size_bytes: 4096
+      files_per_worker: 512
+      cache_max_bytes: 268435456
+    select:
+      scales: [n1_kvowner_dram_20gib, n2_kvowner_dram_20gib, n5_kvowner_dram_20gib, n9_kvowner_dram_20gib]
+      profiles: [fluxon_fastws, fluxon_tquic, fluxon_sockudo_ws, fluxon_tcp, alluxio_posix]
+
+  fs_write_close_commit:
+    test_stack:
+      mode: PY_FS
+      file_size_bytes: 1048576
+      chunk_size_bytes: 262144
+      files_per_worker: 64
+      cache_max_bytes: 268435456
+    select:
+      scales: [n1_kvowner_dram_20gib, n2_kvowner_dram_20gib, n5_kvowner_dram_20gib, n9_kvowner_dram_20gib]
+      profiles: [fluxon_fastws, fluxon_tquic, fluxon_sockudo_ws, fluxon_tcp, alluxio_posix]
+
+  bench_mq:
+    test_stack:
+      mode: MPMC
+      role_weights:
+        producer: 1
+        consumer: 1
+    select:
+      scales: [n1_kvowner_dram_20gib, n2_kvowner_dram_20gib, n5_kvowner_dram_20gib, n9_kvowner_dram_20gib]
+      profiles: [fluxon_fastws, fluxon_tquic, fluxon_sockudo_ws, fluxon_tcp]
+
+scales:
+  n1_kvowner_dram_20gib:
+    duration_seconds: 60
+    topology: 1
+    owner:
+      owner_count: 1
+      owner_dram_bytes: 21474836480
+    benchmark: &bench_benchmark
+      processes_per_target: 1
+      threads_per_process: 4
+      value_size: 16384
+      metric_warmup_seconds: 0
+      op_timeout_seconds: 30
+      cluster_ready_timeout_seconds: 660
+      value_size_list: []
+      consumer_sim_handle_ms_range: [700, 1500]
+
+  n2_kvowner_dram_20gib:
+    duration_seconds: 60
+    topology: 2
+    owner:
+      owner_count: 2
+      owner_dram_bytes: 21474836480
+    benchmark: *bench_benchmark
+
+  n5_kvowner_dram_20gib:
+    duration_seconds: 60
+    topology: 5
+    owner:
+      owner_count: 5
+      owner_dram_bytes: 21474836480
+    benchmark: *bench_benchmark
+
+  n9_kvowner_dram_20gib:
+    duration_seconds: 60
+    topology: 9
+    owner:
+      owner_count: 9
+      owner_dram_bytes: 21474836480
+    benchmark: *bench_benchmark
+
+artifact_sets:
+  fluxon_fastws:
+    release_source: &release_source_fastws
+      kind: FLUXON_OPS_FS_S3
+      bucket: fluxon-release
+      access_key: admin
+      secret_key: admin
+      region: us-east-1
+      key_prefix: profiles/fluxon_fastws
+    release_artifacts:
+      python_wheel: fluxon-0.2.1-py3-none-any.whl
+      pyo3_wheel: fluxon_pyo3-0.2.1-cp38-abi3-manylinux_2_28_x86_64.whl
+    test_rsc_source: &test_rsc_source_fastws
+      kind: FLUXON_OPS_FS_S3
+      bucket: fluxon-release
+      access_key: admin
+      secret_key: admin
+      region: us-east-1
+      key_prefix: test_rsc/fluxon_fastws
+    test_rsc_artifacts:
+      ci_src_archive: src_ci.tar.gz
+      ci_ext_rsc_archive: fluxon_ci_ext_rsc.tar.gz
+
+  fluxon_tquic:
+    release_source: &release_source_tquic
+      kind: FLUXON_OPS_FS_S3
+      bucket: fluxon-release
+      access_key: admin
+      secret_key: admin
+      region: us-east-1
+      key_prefix: profiles/fluxon_tquic
+    release_artifacts:
+      python_wheel: fluxon-0.2.1-py3-none-any.whl
+      pyo3_wheel: fluxon_pyo3-0.2.1-cp38-abi3-manylinux_2_28_x86_64.whl
+    test_rsc_source: &test_rsc_source_tquic
+      kind: FLUXON_OPS_FS_S3
+      bucket: fluxon-release
+      access_key: admin
+      secret_key: admin
+      region: us-east-1
+      key_prefix: test_rsc/fluxon_tquic
+    test_rsc_artifacts:
+      ci_src_archive: src_ci.tar.gz
+      ci_ext_rsc_archive: fluxon_ci_ext_rsc.tar.gz
+
+  fluxon_sockudo_ws:
+    release_source: &release_source_sockudo_ws
+      kind: FLUXON_OPS_FS_S3
+      bucket: fluxon-release
+      access_key: admin
+      secret_key: admin
+      region: us-east-1
+      key_prefix: profiles/fluxon_sockudo_ws
+    release_artifacts:
+      python_wheel: fluxon-0.2.1-py3-none-any.whl
+      pyo3_wheel: fluxon_pyo3-0.2.1-cp38-abi3-manylinux_2_28_x86_64.whl
+    test_rsc_source: &test_rsc_source_sockudo_ws
+      kind: FLUXON_OPS_FS_S3
+      bucket: fluxon-release
+      access_key: admin
+      secret_key: admin
+      region: us-east-1
+      key_prefix: test_rsc/fluxon_sockudo_ws
+    test_rsc_artifacts:
+      ci_src_archive: src_ci.tar.gz
+      ci_ext_rsc_archive: fluxon_ci_ext_rsc.tar.gz
+
+  fluxon_tcp:
+    release_source: &release_source_tcp
+      kind: FLUXON_OPS_FS_S3
+      bucket: fluxon-release
+      access_key: admin
+      secret_key: admin
+      region: us-east-1
+      key_prefix: profiles/fluxon_tcp
+    release_artifacts:
+      python_wheel: fluxon-0.2.1-py3-none-any.whl
+      pyo3_wheel: fluxon_pyo3-0.2.1-cp38-abi3-manylinux_2_28_x86_64.whl
+    test_rsc_source: &test_rsc_source_tcp
+      kind: FLUXON_OPS_FS_S3
+      bucket: fluxon-release
+      access_key: admin
+      secret_key: admin
+      region: us-east-1
+      key_prefix: test_rsc/fluxon_tcp
+    test_rsc_artifacts:
+      ci_src_archive: src_ci.tar.gz
+      ci_ext_rsc_archive: fluxon_ci_ext_rsc.tar.gz
+
+profiles:
+  fluxon_fastws:
+    artifact_set: fluxon_fastws
+    runtime:
+      test_stack: &common_test_stack_runtime
+        kind: FLUXON
+        coordinator_ready_timeout_seconds: 300
+        port_alloc:
+          by_topology:
+            1:
+              coordinator_port_base: 17779
+              coordinator_port_stride: 10
+              kv_master_port_base: 50061
+              kv_master_port_stride: 10
+              kv_p2p_port_base: 11666
+              kv_p2p_port_stride: 66
+            DEFAULT:
+              coordinator_port_base: 18779
+              coordinator_port_stride: 10
+              kv_master_port_base: 50161
+              kv_master_port_stride: 10
+              kv_p2p_port_base: 11666
+              kv_p2p_port_stride: 66
+        deploy:
+          adapter_cmd:
+            - test_profile_adapter.py
+          controller_url: __STACK_CONTROLLER_URL__
+          target_ip_map: &upstream_target_ip_map
+            node-1: 10.127.37.2
+            node-2: 10.127.37.40
+            node-3: 10.127.37.6
+            node-4: 10.127.37.5
+            node-5: 10.127.37.75
+            node-6: 10.127.37.4
+            node-7: 10.127.37.118
+            node-8: 10.127.37.1
+            node-9: 10.127.37.22
+            node-10: 10.127.37.91
+            primary-bastion: 10.233.75.142
+          bootstrap_ready_timeout_seconds: 300
+        runtime_config:
+          kv_base: &upstream_test_stack_kv_base
+            instance_key: bench_base
+            contribute_to_cluster_pool_size: {dram: 0, vram: {}}
+            test_spec_config:
+              disable_observability: true
+              disable_master_replica_cache: true
+              disable_prefix_index: true
+            fluxonkv_spec:
+              cluster_name: __STACK_CLUSTER_NAME__
+              shared_memory_path: __STACK_SHARED_MEMORY_PATH__
+          mq_base:
+            capacity: 40
+            ttl_seconds: 90
+          kv_node_patch_template: {}
+        deploy_templates:
+          coordinator:
+            lifecycle: service
+            k8s_ref: deployment/test_stack_coord
+            deployer:
+              command: [/bin/bash, -lc]
+              args:
+                - |
+                  # Placeholder only. test_runner.py rewrites the actual TEST_STACK
+                  # launch command and resolves the interpreter from target hostworkdir.
+                  :
+          node:
+            lifecycle: job
+            k8s_ref: deployment/test_stack_node___INSTANCE_KEY__
+            deployer:
+              command: [/bin/bash, -lc]
+              args:
+                - |
+                  # Placeholder only. test_runner.py rewrites the actual TEST_STACK
+                  # launch command and resolves the interpreter from target hostworkdir.
+                  : "__INSTANCE_KEY__ __COORDINATOR__"
+
+  fluxon_tquic:
+    artifact_set: fluxon_tquic
+    runtime:
+      test_stack:
+        <<: *common_test_stack_runtime
+
+  fluxon_sockudo_ws:
+    artifact_set: fluxon_sockudo_ws
+    runtime:
+      test_stack:
+        <<: *common_test_stack_runtime
+
+  fluxon_tcp:
+    artifact_set: fluxon_tcp
+    runtime:
+      test_stack:
+        <<: *common_test_stack_runtime
+
+  redis_sharded:
+    artifact_set: fluxon_fastws
+    runtime:
+      test_stack:
+        kind: REDIS
+        coordinator_ready_timeout_seconds: 300
+        port_alloc:
+          by_topology:
+            1:
+              coordinator_port_base: 19779
+              coordinator_port_stride: 10
+              redis_port_base: 26379
+              redis_port_stride: 10
+            DEFAULT:
+              coordinator_port_base: 20779
+              coordinator_port_stride: 10
+              redis_port_base: 27379
+              redis_port_stride: 10
+        deploy:
+          adapter_cmd:
+            - test_profile_adapter.py
+          controller_url: __STACK_CONTROLLER_URL__
+          target_ip_map: *upstream_target_ip_map
+          bootstrap_ready_timeout_seconds: 300
+        runtime_config:
+          redis:
+            server_bundle_test_rsc_relpath: baselines/redis/redis_bundle.tar.gz
+            server_binary_test_rsc_relpath: baselines/redis/redis_bundle/bin/redis-server
+            server_args: []
+            connect_timeout_seconds: 5.0
+            socket_timeout_seconds: 30.0
+            database: 0
+        deploy_templates:
+          coordinator:
+            lifecycle: service
+            k8s_ref: deployment/test_stack_coord
+            deployer:
+              command: [/bin/bash, -lc]
+              args:
+                - |
+                  # Placeholder only. test_runner.py rewrites the actual TEST_STACK
+                  # launch command and resolves the interpreter from target hostworkdir.
+                  :
+          node:
+            lifecycle: job
+            k8s_ref: deployment/test_stack_node___INSTANCE_KEY__
+            deployer:
+              command: [/bin/bash, -lc]
+              args:
+                - |
+                  # Placeholder only. test_runner.py rewrites the actual TEST_STACK
+                  # launch command and resolves the interpreter from target hostworkdir.
+                  : "__INSTANCE_KEY__ __COORDINATOR__"
+
+  alluxio_posix:
+    artifact_set: fluxon_fastws
+    runtime:
+      test_stack:
+        kind: ALLUXIO
+        coordinator_ready_timeout_seconds: 300
+        port_alloc:
+          by_topology:
+            1:
+              coordinator_port_base: 21779
+              coordinator_port_stride: 10
+            DEFAULT:
+              coordinator_port_base: 22779
+              coordinator_port_stride: 10
+        deploy:
+          adapter_cmd:
+            - test_profile_adapter.py
+          controller_url: __STACK_CONTROLLER_URL__
+          target_ip_map: *upstream_target_ip_map
+          bootstrap_ready_timeout_seconds: 300
+        runtime_config:
+          alluxio:
+            bundle_test_rsc_relpath: baselines/alluxio/alluxio_bundle.tar.gz
+            bundle_root_relpath: baselines/alluxio/alluxio_bundle
+            mount_root_by_target:
+              node-1: /mnt/alluxio
+              node-2: /mnt/alluxio
+              node-3: /mnt/alluxio
+              node-4: /mnt/alluxio
+              node-5: /mnt/alluxio
+              node-6: /mnt/alluxio
+              node-7: /mnt/alluxio
+              node-8: /mnt/alluxio
+              node-9: /mnt/alluxio
+              node-10: /mnt/alluxio
+            namespace_prefix: fluxon_test_stack/alluxio
+            mount_command_template: |
+              cd __ALLUXIO_BUNDLE_ROOT__
+              exec ./bin/alluxio-fuse mount __MOUNT_ROOT__
+        deploy_templates:
+          coordinator:
+            lifecycle: service
+            k8s_ref: deployment/test_stack_coord
+            deployer:
+              command: [/bin/bash, -lc]
+              args:
+                - |
+                  # Placeholder only. test_runner.py rewrites the actual TEST_STACK
+                  # launch command and resolves the interpreter from target hostworkdir.
+                  :
+          node:
+            lifecycle: job
+            k8s_ref: deployment/test_stack_node___INSTANCE_KEY__
+            deployer:
+              command: [/bin/bash, -lc]
+              args:
+                - |
+                  # Placeholder only. test_runner.py rewrites the actual TEST_STACK
+                  # launch command and resolves the interpreter from target hostworkdir.
+                  : "__INSTANCE_KEY__ __COORDINATOR__"

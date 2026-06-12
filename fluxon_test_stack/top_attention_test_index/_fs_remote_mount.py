@@ -1,0 +1,18 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+from _common import run_pytest
+
+
+TEST_REQUIREMENTS = ["etcd", "fluxon-pyo3", "kv-cluster", "ops", "submodules"]
+
+
+def main() -> int:
+    return run_pytest(
+        "Flat index entry for heavier Fluxon FS remote mount integration tests.",
+        ["fluxon_py/tests/test_fluxon_fs_remote_mount.py"],
+    )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

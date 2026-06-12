@@ -1,0 +1,69 @@
+schema_version: 6
+
+deployconf_path: ./deployconf_testbed.yml
+controller_url: http://192.0.2.10:19080/r/ops/fluxon_testbed
+controller_basic_auth:
+  username: example_admin
+  password: example_password
+controller_ready_timeout_seconds: 900
+bootstrap_stability_window_seconds: 60
+required_inotify_max_user_watches: 524288
+required_inotify_max_user_instances: 1024
+test_runner_ui:
+  enabled: true
+  host: 0.0.0.0
+  port: 18080
+  workdir: ./test_runner_ui_runtime
+  history_lookback_days: 30
+  gitops_config_path: ./gitops/gitops.yaml
+
+# English note:
+# - `start_test_bed.py` starts after release artifacts and distributed bare scripts are ready.
+# - This file is the operator-facing authority object for post-dispatch test bed ownership.
+# - `start_test_bed.py` is only the coordinator. Its side effects must stay inside four stable
+#   objects:
+#   1) generated bare `start_*.sh`
+#   2) generated bare `stop_*.sh`
+#   3) generated bare start-script reuse probe for deployconf.bootstrap_bare_services
+#   4) controller `/api/deploy`, `/api/apply_wait`
+# - The orchestration order is fixed:
+#   1) run config-derived `fixed_bare` launch waves, but skip already-present bootstrap bare services
+#   2) run config-derived `coverage_bare` launch waves
+#   3) wait controller HTTP back to a short stable window
+#   4) apply controller workloads first
+#   5) wait controller apply
+#   6) apply remaining workloads
+#   7) wait controller apply
+# - `coverage_bare` is config-derived, not readiness-derived.
+# - Local duplicate control-plane targets are excluded only when the same selection is already
+#   covered by a local `fixed_bare` batch.
+# - Keep `etcd`, `greptime`, `tikv_pd`, and `tikv` before any controller workload:
+#   etcd is the membership/control-plane store, greptime is the monitoring/log sink,
+#   and TiKV backs FS transfer state shared by pre-scan and directory transfer.
+# - Bare bootstrap is launch-only. Ownership handover must stay inside the shared selection
+#   supervisor authority during apply/replace, not through an extra post-apply coarse stop pass.
+# - This file does not define takeover rescue or fallback branches.
+# - The only runtime probe allowed here is the generated bare start-script reuse probe for
+#   deployconf.bootstrap_bare_services before launch-only bare start.
+bootstrap_phases:
+  - mode: fixed_bare
+    node: infra44-ThinkStation-PX
+    services:
+      - etcd
+      - greptime
+      - tikv_pd
+      - tikv
+  - mode: fixed_bare
+    node: infra44-ThinkStation-PX
+    services:
+      - fluxon_core_controller
+  - mode: coverage_bare
+    services:
+      - owner
+      - fluxon_fs_master
+      - fluxon_fs_agent
+
+deploy_workloads:
+  - fluxon_core_controller
+  - fluxon_fs_master
+  - fluxon_fs_agent

@@ -1,0 +1,46 @@
+<section class="users_panel fs_master_panel_half">
+  <div class="users_panel_head">
+    <div>
+      <div class="users_panel_eyebrow">Cluster Membership</div>
+      <h2 class="users_panel_title">Members</h2>
+      <div class="users_panel_desc">
+        Live fs members are resolved from cluster membership and classified as controller or agent for
+        operator inspection.
+      </div>
+    </div>
+  </div>
+  <div class="users_panel_body">
+    <table>
+      <thead>
+        <tr>
+          <th>kind</th>
+          <th>member_id</th>
+          <th>attached_owner</th>
+          <th>hostname</th>
+          <th>addr</th>
+          <th>pid</th>
+          <th>cmd</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if show_empty_members %}
+          <tr>
+            <td colspan="7" class="mono muted">(none)</td>
+          </tr>
+        {% else %}
+          {% for member in members %}
+            <tr>
+              <td class="mono">{{ member.kind }}</td>
+              <td><span class="mono mono_scroll_x">{{ member.member_id }}</span></td>
+              <td><span class="mono mono_scroll_x">{{ member.owner_id }}</span></td>
+              <td>{{ member.hostname }}</td>
+              <td><span class="mono mono_scroll_x">{{ member.addr }}</span></td>
+              <td><span class="mono mono_scroll_x">{{ member.pid }}</span></td>
+              <td><span class="mono mono_scroll_x">{{ member.cmd }}</span></td>
+            </tr>
+          {% endfor %}
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</section>

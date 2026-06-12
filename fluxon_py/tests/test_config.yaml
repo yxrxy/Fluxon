@@ -1,0 +1,2 @@
+deployconf_path: ../../deployment/deployconf.yaml
+kv_svc_type: fluxon

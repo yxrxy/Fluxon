@@ -1,0 +1,623 @@
+{% extends "layout.html" %}
+
+{% block title %}Fluxon MQ Monitor{% endblock %}
+
+{% block head_extra %}
+<style>
+  .mq-toolbar { margin-top: 10px; }
+  .mq-channel-list { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+  .mq-channel-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 8px 12px;
+    margin-top: 10px;
+  }
+  .mq-summary-item {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 8px 10px;
+    background: #f8fafc;
+    min-width: 0;
+  }
+  .mq-summary-item .label {
+    display: block;
+    margin-bottom: 4px;
+    color: #6b7280;
+    font-size: 11px;
+  }
+  .mq-member-wrap { margin-top: 12px; }
+  .mq-member-empty {
+    border: 1px dashed #d1d5db;
+    border-radius: 8px;
+    padding: 10px 12px;
+    background: #f9fafb;
+  }
+  .mq-member-row-producer td:first-child { color: #065f46; font-weight: 600; }
+  .mq-member-row-consumer td:first-child { color: #1d4ed8; font-weight: 600; }
+  .mq-channel-card[hidden] { display: none !important; }
+</style>
+{% endblock %}
+
+{% block body %}
+<div id="app">
+<h1>Fluxon MQ Monitor</h1>
+
+<div class="top">
+  <div class="card">
+    <div class="muted">version: <span class="mono">{{ build.version }}</span></div>
+    <div class="muted">commit: <span class="mono">{{ build.commit }}</span></div>
+    <div class="muted">source-sha256: <span class="mono">{{ build.source_sha256 }}</span></div>
+  </div>
+  <div class="card">
+    <div class="row"><span class="mono">cluster_name</span>: {{ header.cluster_name }}</div>
+    <div class="row"><span class="mono">member_kind</span>: {{ header.member_kind }}</div>
+    <div class="row"><span class="mono">etcd_endpoints</span>: {{ header.etcd_endpoints }}</div>
+    <div class="row"><span class="mono">prometheus_base_url</span>: {{ header.prometheus_base_url }}</div>
+  </div>
+  <div class="card">
+    <div class="muted">Auto refresh in <span id="refresh-in" class="mono">{{ refresh_secs }}</span>s</div>
+  </div>
+</div>
+
+{% if warnings.len() > 0 %}
+  <div class="warn">
+    <div><b>Warnings</b></div>
+    {% for w in warnings %}
+      <div class="mono">- {{ w }}</div>
+    {% endfor %}
+  </div>
+{% endif %}
+
+<div id="mq_channels" class="card" data-state-key="mq_channels">
+  <div class="formrow">
+    <b>Channels</b>
+    <span class="muted">Channel summary plus per-member details.</span>
+  </div>
+
+  <div class="muted tiny" style="margin-top:8px">
+    Observation notes:
+    <span class="mono">unique_keys</span>, offsets, and inflight are live snapshot fields;
+    <span class="mono">window_*</span> metrics and topology message rates use a 30s observation window;
+    <span class="mono">nonblocking_latest_*</span> uses the latest interval shown in the interval field.
+  </div>
+
+  <div class="card mq-toolbar" data-state-key="mq_channels_controls">
+    <div class="formrow">
+      <label><span class="mono">chan_id</span></label>
+      <input id="mq_filter_chan_id" type="text" placeholder="substring" />
+      <label><span class="mono">unique_keys</span></label>
+      <input id="mq_filter_unique_keys" type="text" placeholder="substring" />
+      <label><span class="mono">member</span></label>
+      <input id="mq_filter_member" type="text" placeholder="idx / owner / external_client_id" />
+      <label><span class="mono">kind</span></label>
+      <select id="mq_filter_kind">
+        <option value="">all</option>
+        <option value="producer">producer</option>
+        <option value="consumer">consumer</option>
+      </select>
+      <button type="button" id="mq_clear_filter">Clear</button>
+    </div>
+
+    <div class="formrow" style="margin-top:8px">
+      <label>Sort</label>
+      <select id="mq_sort_key">
+        <option value="chan_id">chan_id</option>
+        <option value="current_inflight">current_inflight</option>
+        <option value="producer_count">producer_count</option>
+        <option value="consumer_count">consumer_count</option>
+        <option value="capacity">capacity</option>
+        <option value="ttl_seconds">ttl_seconds</option>
+        <option value="payload_lease_id">payload_lease_id</option>
+      </select>
+      <select id="mq_sort_dir">
+        <option value="asc">asc</option>
+        <option value="desc">desc</option>
+      </select>
+      <label><input type="checkbox" id="mq_col_metrics" checked />show metrics</label>
+      <label><input type="checkbox" id="mq_auto_expand_matches" checked />auto expand matches</label>
+    </div>
+  </div>
+
+  <div id="mq_channels_empty" class="muted tiny" style="display:none; margin-top:10px">No matching channels.</div>
+
+  <div id="mq_channel_list" class="mq-channel-list">
+    {% for group in channel_groups %}
+      <details
+        class="card mq-channel-card"
+        open
+        data-state-key="mq_chan_{{ group.channel.chan_id }}"
+        data-sort-chan-id="{{ group.channel.chan_id }}"
+        data-sort-current-inflight="{{ group.channel.current_inflight.sort }}"
+        data-sort-producer-count="{{ group.channel.producer_count }}"
+        data-sort-consumer-count="{{ group.channel.consumer_count }}"
+        data-sort-capacity="{{ group.channel.capacity }}"
+        data-sort-ttl-seconds="{{ group.channel.ttl_seconds }}"
+        data-sort-payload-lease-id="{{ group.channel.payload_lease_id }}"
+        data-chan-id-text="{{ group.channel.chan_id }}"
+        data-unique-keys-text="{{ group.channel.unique_keys }}"
+        data-member-search-text="{% for member in group.members %}{{ member.kind }} {{ member.idx }} {{ member.owner_id }} {{ member.external_client_id }} {{ member.kvclient_sub_cluster }} {% endfor %}"
+        data-member-kinds="{% for member in group.members %}{{ member.kind }} {% endfor %}">
+        <summary>
+          <span class="mono">{{ group.channel.chan_id }}</span>
+          <span class="muted">inflight:</span>
+          <span class="mono">{{ group.channel.current_inflight.text }}</span>
+          <span class="muted">producer/consumer:</span>
+          <span class="mono">{{ group.channel.producer_count }}/{{ group.channel.consumer_count }}</span>
+        </summary>
+
+        <div class="mq-channel-summary-grid">
+          <div class="mq-summary-item">
+            <span class="label mono">chan_id</span>
+            <span class="mono">{{ group.channel.chan_id }}</span>
+          </div>
+          <div class="mq-summary-item">
+            <span class="label mono">current_inflight</span>
+            <span class="mono">{{ group.channel.current_inflight.text }}</span>
+          </div>
+          <div class="mq-summary-item">
+            <span class="label mono">producer_offsets</span>
+            <span class="mono">{{ group.channel.producer_offsets }}</span>
+          </div>
+          <div class="mq-summary-item">
+            <span class="label mono">capacity</span>
+            <span class="mono">{{ group.channel.capacity }}</span>
+          </div>
+          <div class="mq-summary-item">
+            <span class="label mono">ttl_seconds</span>
+            <span class="mono">{{ group.channel.ttl_seconds }}</span>
+          </div>
+          <div class="mq-summary-item">
+            <span class="label mono">payload_lease_id</span>
+            <span class="mono">{{ group.channel.payload_lease_id }}</span>
+          </div>
+          <div class="mq-summary-item">
+            <span class="label mono">unique_keys</span>
+            <span class="mono">{{ group.channel.unique_keys }}</span>
+          </div>
+          <div class="mq-summary-item">
+            <span class="label mono">producer_count</span>
+            <span class="mono">{{ group.channel.producer_count }}</span>
+          </div>
+          <div class="mq-summary-item">
+            <span class="label mono">consumer_count</span>
+            <span class="mono">{{ group.channel.consumer_count }}</span>
+          </div>
+
+          <div class="mq-summary-item mq-metric-item">
+            <span class="label mono">prefetch_avg_get_handle_ms(max)</span>
+            <span class="mono">{{ group.channel.prefetch_avg_get_handle_ms.text }}</span>
+          </div>
+          <div class="mq-summary-item mq-metric-item">
+            <span class="label mono">prefetch_latest_get_handle_ms(max)</span>
+            <span class="mono">{{ group.channel.prefetch_latest_get_handle_ms.text }}</span>
+          </div>
+          <div class="mq-summary-item mq-metric-item">
+            <span class="label mono">prefetch_avg_handle_await_ms(max)</span>
+            <span class="mono">{{ group.channel.prefetch_avg_handle_await_ms.text }}</span>
+          </div>
+          <div class="mq-summary-item mq-metric-item">
+            <span class="label mono">prefetch_latest_handle_await_ms(max)</span>
+            <span class="mono">{{ group.channel.prefetch_latest_handle_await_ms.text }}</span>
+          </div>
+          <div class="mq-summary-item mq-metric-item">
+            <span class="label mono">prefetch_avg_etcd_put_ms(max)</span>
+            <span class="mono">{{ group.channel.prefetch_avg_etcd_put_ms.text }}</span>
+          </div>
+          <div class="mq-summary-item mq-metric-item">
+            <span class="label mono">prefetch_latest_etcd_put_ms(max)</span>
+            <span class="mono">{{ group.channel.prefetch_latest_etcd_put_ms.text }}</span>
+          </div>
+          <div class="mq-summary-item mq-metric-item">
+            <span class="label mono">prefetch_inflight_queue_size(max)</span>
+            <span class="mono">{{ group.channel.prefetch_inflight_queue_size.text }}</span>
+          </div>
+          <div class="mq-summary-item mq-metric-item">
+            <span class="label mono">prefetch_target_inflight(max)</span>
+            <span class="mono">{{ group.channel.prefetch_target_inflight.text }}</span>
+          </div>
+          <div class="mq-summary-item mq-metric-item">
+            <span class="label mono">get_one_avg_total_ms(max)</span>
+            <span class="mono">{{ group.channel.get_one_avg_total_ms.text }}</span>
+          </div>
+          <div class="mq-summary-item mq-metric-item">
+            <span class="label mono">get_one_max_total_ms(max)</span>
+            <span class="mono">{{ group.channel.get_one_max_total_ms.text }}</span>
+          </div>
+          <div class="mq-summary-item mq-metric-item">
+            <span class="label mono">get_one_avg_wait_rx_ms(max)</span>
+            <span class="mono">{{ group.channel.get_one_avg_wait_rx_ms.text }}</span>
+          </div>
+          <div class="mq-summary-item mq-metric-item">
+            <span class="label mono">get_one_max_wait_rx_ms(max)</span>
+            <span class="mono">{{ group.channel.get_one_max_wait_rx_ms.text }}</span>
+          </div>
+          <div class="mq-summary-item mq-metric-item">
+            <span class="label mono">get_one_avg_signal_ms(max)</span>
+            <span class="mono">{{ group.channel.get_one_avg_signal_ms.text }}</span>
+          </div>
+          <div class="mq-summary-item mq-metric-item">
+            <span class="label mono">get_one_max_signal_ms(max)</span>
+            <span class="mono">{{ group.channel.get_one_max_signal_ms.text }}</span>
+          </div>
+          <div class="mq-summary-item mq-metric-item">
+            <span class="label mono">get_one_avg_post_ms(max)</span>
+            <span class="mono">{{ group.channel.get_one_avg_post_ms.text }}</span>
+          </div>
+          <div class="mq-summary-item mq-metric-item">
+            <span class="label mono">get_one_max_post_ms(max)</span>
+            <span class="mono">{{ group.channel.get_one_max_post_ms.text }}</span>
+          </div>
+          <div class="mq-summary-item mq-metric-item">
+            <span class="label mono">get_one_window_calls(sum)</span>
+            <span class="mono">{{ group.channel.get_one_window_calls_sum.text }}</span>
+          </div>
+          <div class="mq-summary-item mq-metric-item">
+            <span class="label mono">get_one_window_timeouts(sum)</span>
+            <span class="mono">{{ group.channel.get_one_window_timeouts_sum.text }}</span>
+          </div>
+          <div class="mq-summary-item mq-metric-item">
+            <span class="label mono">producer_nonblocking_latest_phase_calls</span>
+            <span class="mono">{{ group.channel.producer_nonblocking_latest_phase_calls.text }}</span>
+          </div>
+          <div class="mq-summary-item mq-metric-item">
+            <span class="label mono">producer_nonblocking_latest_phase_rps</span>
+            <span class="mono">{{ group.channel.producer_nonblocking_latest_phase_rps.text }}</span>
+          </div>
+          <div class="mq-summary-item mq-metric-item">
+            <span class="label mono">producer_nonblocking_latest_interval</span>
+            <span class="mono">{{ group.channel.producer_nonblocking_latest_interval }}</span>
+          </div>
+          <div class="mq-summary-item mq-metric-item">
+            <span class="label mono">consumer_nonblocking_latest_phase_calls</span>
+            <span class="mono">{{ group.channel.consumer_nonblocking_latest_phase_calls.text }}</span>
+          </div>
+          <div class="mq-summary-item mq-metric-item">
+            <span class="label mono">consumer_nonblocking_latest_phase_rps</span>
+            <span class="mono">{{ group.channel.consumer_nonblocking_latest_phase_rps.text }}</span>
+          </div>
+          <div class="mq-summary-item mq-metric-item">
+            <span class="label mono">consumer_nonblocking_latest_interval</span>
+            <span class="mono">{{ group.channel.consumer_nonblocking_latest_interval }}</span>
+          </div>
+        </div>
+
+        <div class="mq-member-wrap">
+          {% if group.members.len() == 0 %}
+            <div class="mq-member-empty muted">No producers or consumers reported.</div>
+          {% else %}
+            <div class="tablewrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>kind</th>
+                    <th>idx</th>
+                    <th>status</th>
+                    <th>external_client_id</th>
+                    <th>owner_id</th>
+                    <th>produce_offset</th>
+                    <th>consume_offset</th>
+                    <th>kvclient_sub_cluster</th>
+                    <th>channel_unique_keys</th>
+                    <th>prefetch_avg_get_handle_ms</th>
+                    <th>prefetch_latest_get_handle_ms</th>
+                    <th>prefetch_avg_handle_await_ms</th>
+                    <th>prefetch_latest_handle_await_ms</th>
+                    <th>prefetch_avg_etcd_put_ms</th>
+                    <th>prefetch_latest_etcd_put_ms</th>
+                    <th>prefetch_inflight_queue_size</th>
+                    <th>prefetch_target_inflight</th>
+                    <th>get_one_avg_total_ms</th>
+                    <th>get_one_max_total_ms</th>
+                    <th>get_one_avg_wait_rx_ms</th>
+                    <th>get_one_max_wait_rx_ms</th>
+                    <th>get_one_avg_signal_ms</th>
+                    <th>get_one_max_signal_ms</th>
+                    <th>get_one_avg_post_ms</th>
+                    <th>get_one_max_post_ms</th>
+                    <th>get_one_window_calls</th>
+                    <th>get_one_window_timeouts</th>
+                    <th>nonblocking_latest_phase_calls</th>
+                    <th>nonblocking_latest_phase_rps</th>
+                    <th>nonblocking_latest_interval</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for member in group.members %}
+                    <tr class="mq-member-row-{{ member.kind }}">
+                      <td class="mono">{{ member.kind }}</td>
+                      <td class="mono">{{ member.idx }}</td>
+                      <td class="mono">{{ member.status }}</td>
+                      <td class="mono">{{ member.external_client_id }}</td>
+                      <td class="mono">{{ member.owner_id }}</td>
+                      <td class="mono">{{ member.produce_offset }}</td>
+                      <td class="mono">{{ member.consume_offset }}</td>
+                      <td class="mono">{{ member.kvclient_sub_cluster }}</td>
+                      <td class="mono">{{ member.channel_unique_keys }}</td>
+                      <td class="mono">{{ member.prefetch_avg_get_handle_ms.text }}</td>
+                      <td class="mono">{{ member.prefetch_latest_get_handle_ms.text }}</td>
+                      <td class="mono">{{ member.prefetch_avg_handle_await_ms.text }}</td>
+                      <td class="mono">{{ member.prefetch_latest_handle_await_ms.text }}</td>
+                      <td class="mono">{{ member.prefetch_avg_etcd_put_ms.text }}</td>
+                      <td class="mono">{{ member.prefetch_latest_etcd_put_ms.text }}</td>
+                      <td class="mono">{{ member.prefetch_inflight_queue_size.text }}</td>
+                      <td class="mono">{{ member.prefetch_target_inflight.text }}</td>
+                      <td class="mono">{{ member.get_one_avg_total_ms.text }}</td>
+                      <td class="mono">{{ member.get_one_max_total_ms.text }}</td>
+                      <td class="mono">{{ member.get_one_avg_wait_rx_ms.text }}</td>
+                      <td class="mono">{{ member.get_one_max_wait_rx_ms.text }}</td>
+                      <td class="mono">{{ member.get_one_avg_signal_ms.text }}</td>
+                      <td class="mono">{{ member.get_one_max_signal_ms.text }}</td>
+                      <td class="mono">{{ member.get_one_avg_post_ms.text }}</td>
+                      <td class="mono">{{ member.get_one_max_post_ms.text }}</td>
+                      <td class="mono">{{ member.get_one_window_calls.text }}</td>
+                      <td class="mono">{{ member.get_one_window_timeouts.text }}</td>
+                      <td class="mono">{{ member.nonblocking_latest_phase_calls.text }}</td>
+                      <td class="mono">{{ member.nonblocking_latest_phase_rps.text }}</td>
+                      <td class="mono">{{ member.nonblocking_latest_interval }}</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% endif %}
+        </div>
+      </details>
+    {% endfor %}
+  </div>
+</div>
+</div>
+
+<script>
+(() => {
+  const storageKey = 'fluxon_cli.mq.tree.v1:' + '{{ header.cluster_name_encoded }}';
+
+  function rootEl() {
+    return document.getElementById('mq_channels');
+  }
+
+  function listEl() {
+    return document.getElementById('mq_channel_list');
+  }
+
+  function emptyEl() {
+    return document.getElementById('mq_channels_empty');
+  }
+
+  function controls() {
+    return {
+      chanId: document.getElementById('mq_filter_chan_id'),
+      uniqueKeys: document.getElementById('mq_filter_unique_keys'),
+      member: document.getElementById('mq_filter_member'),
+      kind: document.getElementById('mq_filter_kind'),
+      sortKey: document.getElementById('mq_sort_key'),
+      sortDir: document.getElementById('mq_sort_dir'),
+      metrics: document.getElementById('mq_col_metrics'),
+      autoExpand: document.getElementById('mq_auto_expand_matches'),
+      clear: document.getElementById('mq_clear_filter'),
+    };
+  }
+
+  function cards() {
+    const list = listEl();
+    if (!list) return [];
+    return Array.from(list.querySelectorAll('.mq-channel-card'));
+  }
+
+  function textValue(el, name) {
+    return (el.getAttribute(name) || '').toString().trim().toLowerCase();
+  }
+
+  function sortValue(el, key) {
+    const raw = el.getAttribute('data-sort-' + key.replaceAll('_', '-')) || '';
+    const num = Number(raw);
+    if (raw !== '' && Number.isFinite(num)) return num;
+    return raw;
+  }
+
+  function compareValues(a, b) {
+    const aNum = typeof a === 'number' ? a : Number.NaN;
+    const bNum = typeof b === 'number' ? b : Number.NaN;
+    if (!Number.isNaN(aNum) && !Number.isNaN(bNum)) {
+      return aNum === bNum ? 0 : (aNum < bNum ? -1 : 1);
+    }
+    return String(a).localeCompare(String(b));
+  }
+
+  function captureDetailsState() {
+    const out = {};
+    for (const card of cards()) {
+      const key = card.getAttribute('data-state-key');
+      if (key) out[key] = !!card.open;
+    }
+    return out;
+  }
+
+  function restoreDetailsState(state) {
+    if (!state || typeof state !== 'object') return;
+    for (const card of cards()) {
+      const key = card.getAttribute('data-state-key');
+      if (!key) continue;
+      if (Object.prototype.hasOwnProperty.call(state, key)) {
+        card.open = !!state[key];
+      }
+    }
+  }
+
+  function captureState() {
+    const ctl = controls();
+    return {
+      filters: {
+        chan_id: ctl.chanId ? ctl.chanId.value : '',
+        unique_keys: ctl.uniqueKeys ? ctl.uniqueKeys.value : '',
+        member: ctl.member ? ctl.member.value : '',
+        kind: ctl.kind ? ctl.kind.value : '',
+      },
+      sort: {
+        key: ctl.sortKey ? ctl.sortKey.value : 'chan_id',
+        dir: ctl.sortDir ? ctl.sortDir.value : 'asc',
+      },
+      toggles: {
+        metrics: !!(ctl.metrics && ctl.metrics.checked),
+        auto_expand_matches: !!(ctl.autoExpand && ctl.autoExpand.checked),
+      },
+      details: captureDetailsState(),
+    };
+  }
+
+  function restoreState(state) {
+    if (!state || typeof state !== 'object') return;
+    const ctl = controls();
+    const filters = state.filters || {};
+    const sort = state.sort || {};
+    const toggles = state.toggles || {};
+    if (ctl.chanId) ctl.chanId.value = filters.chan_id || '';
+    if (ctl.uniqueKeys) ctl.uniqueKeys.value = filters.unique_keys || '';
+    if (ctl.member) ctl.member.value = filters.member || '';
+    if (ctl.kind) ctl.kind.value = filters.kind || '';
+    if (ctl.sortKey) ctl.sortKey.value = sort.key || 'chan_id';
+    if (ctl.sortDir) ctl.sortDir.value = sort.dir || 'asc';
+    if (ctl.metrics) ctl.metrics.checked = toggles.metrics !== false;
+    if (ctl.autoExpand) ctl.autoExpand.checked = toggles.auto_expand_matches !== false;
+    restoreDetailsState(state.details);
+  }
+
+  function saveState() {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(captureState()));
+    } catch (err) {
+      console.warn('mq tree state save failed', err);
+    }
+  }
+
+  function loadState() {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch (err) {
+      console.warn('mq tree state load failed', err);
+      return null;
+    }
+  }
+
+  function applyMetricVisibility() {
+    const root = rootEl();
+    const ctl = controls();
+    if (!root) return;
+    const show = !!(ctl.metrics && ctl.metrics.checked);
+    for (const el of root.querySelectorAll('.mq-metric-item')) {
+      el.style.display = show ? '' : 'none';
+    }
+  }
+
+  function apply() {
+    const list = listEl();
+    const empty = emptyEl();
+    const ctl = controls();
+    if (!list || !empty) return;
+
+    const chanFilter = ctl.chanId ? ctl.chanId.value.trim().toLowerCase() : '';
+    const uniqueKeyFilter = ctl.uniqueKeys ? ctl.uniqueKeys.value.trim().toLowerCase() : '';
+    const memberFilter = ctl.member ? ctl.member.value.trim().toLowerCase() : '';
+    const kindFilter = ctl.kind ? ctl.kind.value.trim().toLowerCase() : '';
+    const sortKey = ctl.sortKey ? ctl.sortKey.value : 'chan_id';
+    const sortDir = ctl.sortDir ? ctl.sortDir.value : 'asc';
+    const autoExpand = !!(ctl.autoExpand && ctl.autoExpand.checked);
+
+    applyMetricVisibility();
+
+    let visibleCount = 0;
+    const rows = cards();
+    for (const card of rows) {
+      const chanIdText = textValue(card, 'data-chan-id-text');
+      const uniqueKeysText = textValue(card, 'data-unique-keys-text');
+      const memberText = textValue(card, 'data-member-search-text');
+      const memberKinds = textValue(card, 'data-member-kinds');
+
+      const okChan = chanFilter === '' || chanIdText.includes(chanFilter);
+      const okUnique = uniqueKeyFilter === '' || uniqueKeysText.includes(uniqueKeyFilter);
+      const okMember = memberFilter === '' || memberText.includes(memberFilter);
+      const okKind = kindFilter === '' || memberKinds.includes(kindFilter);
+      const ok = okChan && okUnique && okMember && okKind;
+
+      card.hidden = !ok;
+      if (ok) {
+        visibleCount += 1;
+        if (autoExpand && (memberFilter !== '' || kindFilter !== '')) {
+          card.open = true;
+        }
+      }
+    }
+
+    rows.sort((a, b) => {
+      const cmp = compareValues(sortValue(a, sortKey), sortValue(b, sortKey));
+      return sortDir === 'desc' ? -cmp : cmp;
+    });
+    for (const card of rows) {
+      list.appendChild(card);
+    }
+
+    empty.style.display = visibleCount === 0 ? '' : 'none';
+    saveState();
+  }
+
+  function clear() {
+    const ctl = controls();
+    if (ctl.chanId) ctl.chanId.value = '';
+    if (ctl.uniqueKeys) ctl.uniqueKeys.value = '';
+    if (ctl.member) ctl.member.value = '';
+    if (ctl.kind) ctl.kind.value = '';
+    if (ctl.sortKey) ctl.sortKey.value = 'chan_id';
+    if (ctl.sortDir) ctl.sortDir.value = 'asc';
+    if (ctl.metrics) ctl.metrics.checked = true;
+    if (ctl.autoExpand) ctl.autoExpand.checked = true;
+    for (const card of cards()) {
+      card.open = true;
+    }
+    apply();
+  }
+
+  function wire() {
+    const ctl = controls();
+    const listeners = [
+      [ctl.chanId, 'input', apply],
+      [ctl.uniqueKeys, 'input', apply],
+      [ctl.member, 'input', apply],
+      [ctl.kind, 'change', apply],
+      [ctl.sortKey, 'change', apply],
+      [ctl.sortDir, 'change', apply],
+      [ctl.metrics, 'change', apply],
+      [ctl.autoExpand, 'change', apply],
+      [ctl.clear, 'click', clear],
+    ];
+    for (const [el, event, handler] of listeners) {
+      if (el) el.addEventListener(event, handler);
+    }
+    for (const card of cards()) {
+      card.addEventListener('toggle', saveState);
+    }
+  }
+
+  restoreState(loadState());
+  wire();
+  apply();
+
+  window.fluxon_cli_auto_refresh_cfg = {
+    mode: 'replace_app',
+    refreshSecs: {{ refresh_secs }},
+    url: window.location.href,
+    appId: 'app',
+    countdownId: 'refresh-in',
+  };
+
+  window.fluxon_cli_auto_refresh_hooks = {
+    captureState: () => captureState(),
+    restoreState: (state) => restoreState(state),
+    afterReplace: () => {
+      applyMetricVisibility();
+      apply();
+    },
+  };
+})();
+</script>
+{% endblock %}
