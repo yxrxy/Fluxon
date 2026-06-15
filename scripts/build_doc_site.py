@@ -101,13 +101,6 @@ EXPLORER_FORCE_EXPANDED_CSS = dedent(
       vertical-align: middle;
     }
 
-    a[href="https://github.com/Tele-AI/fluxon"] > svg[aria-label="GitHub repository"] {
-      display: inline-block;
-      position: relative;
-      top: -2px;
-      vertical-align: middle;
-    }
-
     a[href="https://github.com/Tele-AI/fluxon"] > .external-icon {
       display: none;
     }
