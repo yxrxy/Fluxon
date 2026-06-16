@@ -170,7 +170,7 @@ class TestOpsCiPipelineContract(unittest.TestCase):
         self.assertEqual(len(run_steps), 1)
         self.assertEqual(
             run_steps[0].get("run"),
-            "python3 -m fluxon_py.runtime.ops_ci workflow-contract-tests",
+            "python3 fluxon_py/runtime/ops_ci.py workflow-contract-tests",
         )
 
 

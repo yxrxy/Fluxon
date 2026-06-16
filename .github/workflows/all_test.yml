@@ -36,4 +36,4 @@ jobs:
           python-version: "3.10"
 
       - name: Run workflow contract tests
-        run: python3 -m fluxon_py.runtime.ops_ci workflow-contract-tests
+        run: python3 fluxon_py/runtime/ops_ci.py workflow-contract-tests
