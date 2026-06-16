@@ -157,21 +157,22 @@ class TestOpsCiPipelineContract(unittest.TestCase):
             ],
         )
 
-    def test_ci_workflow_calls_ops_ci_contract_entry(self) -> None:
+    def test_ci_workflow_builds_doc_site_via_ops_ci_entry(self) -> None:
         workflow = yaml.safe_load(CI_WORKFLOW_PATH.read_text(encoding="utf-8"))
         self.assertIsInstance(workflow, dict)
         self.assertEqual(workflow.get("name"), "CI")
         jobs = workflow.get("jobs")
         self.assertIsInstance(jobs, dict)
-        job = jobs.get("workflow-contract-tests")
+        job = jobs.get("build-doc-site")
         self.assertIsInstance(job, dict)
+        self.assertEqual(job.get("name"), "Build doc site")
         steps = job.get("steps")
         self.assertIsInstance(steps, list)
-        run_steps = [step for step in steps if isinstance(step, dict) and step.get("name") == "Run workflow contract tests"]
+        run_steps = [step for step in steps if isinstance(step, dict) and step.get("name") == "Build doc site"]
         self.assertEqual(len(run_steps), 1)
         self.assertEqual(
             run_steps[0].get("run"),
-            "python3 fluxon_test_stack/ops_ci.py workflow-contract-tests",
+            "python3 fluxon_test_stack/ops_ci.py build-doc-site --base-url-from-github-env",
         )
 
 
