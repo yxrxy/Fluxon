@@ -14,7 +14,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MODULE_PATH = REPO_ROOT / "fluxon_test_stack" / "ops_ci.py"
-ALL_TEST_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "all_test.yml"
+CI_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 
 def _load_module():
@@ -157,9 +157,10 @@ class TestOpsCiPipelineContract(unittest.TestCase):
             ],
         )
 
-    def test_all_test_workflow_calls_ops_ci_contract_entry(self) -> None:
-        workflow = yaml.safe_load(ALL_TEST_WORKFLOW_PATH.read_text(encoding="utf-8"))
+    def test_ci_workflow_calls_ops_ci_contract_entry(self) -> None:
+        workflow = yaml.safe_load(CI_WORKFLOW_PATH.read_text(encoding="utf-8"))
         self.assertIsInstance(workflow, dict)
+        self.assertEqual(workflow.get("name"), "CI")
         jobs = workflow.get("jobs")
         self.assertIsInstance(jobs, dict)
         job = jobs.get("workflow-contract-tests")

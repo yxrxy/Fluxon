@@ -1,4 +1,4 @@
-name: all_test
+name: CI
 
 on:
   pull_request:
@@ -8,7 +8,7 @@ on:
       - reopened
     # Rebuild when doc or homepage inputs change.
     paths:
-      - ".github/workflows/all_test.yml"
+      - ".github/workflows/ci.yml"
       - ".github/workflows/docs-pages.yml"
       - "fluxon_test_stack/ops_ci.py"
       - "deployment/tests/test_ops_ci_pipeline_contract.py"
