@@ -4,8 +4,11 @@ import importlib
 from typing import Any
 
 __all__ = [
+    "build_doc_site",
+    "build_release",
     "run_kv_master_blocking",
     "run_kv_master_service_blocking",
+    "start_test_bed",
     "start_kv_master_process",
     "start_kv_master_process_with_config_b64",
     "run_owner_kvclient_blocking",
@@ -30,11 +33,15 @@ __all__ = [
     "start_fs_agent_process_with_config_b64",
     "register_ctrlc_callback",
     "wait_subproc_or_ctrlc",
+    "workflow_contract_tests",
 ]
 
 _LAZY_RUNTIME_EXPORTS = {
+    "build_doc_site": ("ops_ci", "build_doc_site"),
+    "build_release": ("ops_ci", "build_release"),
     "run_kv_master_blocking": ("start_master", "run_kv_master_blocking"),
     "run_kv_master_service_blocking": ("start_master", "run_kv_master_service_blocking"),
+    "start_test_bed": ("ops_ci", "start_test_bed"),
     "start_kv_master_process": ("start_master", "start_kv_master_process"),
     "start_kv_master_process_with_config_b64": ("start_master", "start_kv_master_process_with_config_b64"),
     "run_owner_kvclient_blocking": ("start_owner_kvclient", "run_owner_kvclient_blocking"),
@@ -59,6 +66,7 @@ _LAZY_RUNTIME_EXPORTS = {
     "start_fs_agent_process_with_config_b64": ("start_fs_agent", "start_fs_agent_process_with_config_b64"),
     "register_ctrlc_callback": ("process_runner", "register_ctrlc_callback"),
     "wait_subproc_or_ctrlc": ("process_runner", "wait_subproc_or_ctrlc"),
+    "workflow_contract_tests": ("ops_ci", "workflow_contract_tests"),
 }
 
 

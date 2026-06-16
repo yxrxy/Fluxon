@@ -6,10 +6,12 @@ import importlib.util
 import sys
 import unittest
 from pathlib import Path
+import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "build_doc_site.py"
+DOCS_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "docs-pages.yml"
 
 
 def _load_module():
@@ -59,11 +61,27 @@ class TestBuildDocSiteContract(unittest.TestCase):
         )
         self.assertEqual(
             _DOC_SITE.rewrite_homepage_target_path("./fluxon_doc_cn/user_doc/", language="cn"),
-            "./user_doc/",
+            "../cn/user_doc/",
         )
         self.assertEqual(
             _DOC_SITE.rewrite_homepage_target_path("./fluxon_rs/rust-toolchain.toml", language="cn"),
             "../fluxon_rs/rust-toolchain.toml",
+        )
+
+    def test_docs_pages_workflow_calls_ops_ci_doc_site_entry(self) -> None:
+        workflow = yaml.safe_load(DOCS_WORKFLOW_PATH.read_text(encoding="utf-8"))
+        self.assertIsInstance(workflow, dict)
+        jobs = workflow.get("jobs")
+        self.assertIsInstance(jobs, dict)
+        build_job = jobs.get("build")
+        self.assertIsInstance(build_job, dict)
+        steps = build_job.get("steps")
+        self.assertIsInstance(steps, list)
+        build_steps = [step for step in steps if isinstance(step, dict) and step.get("name") == "Build doc site"]
+        self.assertEqual(len(build_steps), 1)
+        self.assertEqual(
+            build_steps[0].get("run"),
+            "python3 -m fluxon_py.runtime.ops_ci build-doc-site --base-url-from-github-env",
         )
 
 
