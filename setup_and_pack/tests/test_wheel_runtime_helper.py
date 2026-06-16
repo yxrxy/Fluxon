@@ -9,7 +9,7 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from setup_and_pack import wheel_runtime_helper as _WHEEL_HELPER
+from setup_and_pack.utils import wheel_runtime_helper as _WHEEL_HELPER
 
 
 class WheelRuntimeHelperTest(unittest.TestCase):
@@ -49,13 +49,30 @@ class WheelRuntimeHelperTest(unittest.TestCase):
             libs_dir.mkdir(parents=True)
             (source_dir / "fluxon_pyo3").mkdir()
             (source_dir / "fluxon_pyo3" / "__init__.py").write_text("", encoding="utf-8")
-            (libs_dir / "libfluxon_commu_core-abc.so").write_text("old-core", encoding="utf-8")
+            old_core = root / "libfluxon_commu_core_old.so"
+            subprocess.run(
+                ["cc", "-shared", "-fPIC", "-Wl,-soname,libfluxon_commu_core-abc.so", "-o", str(old_core), "-xc", "-"],
+                input="int old_core(void) { return 1; }\n",
+                text=True,
+                check=True,
+            )
+            (libs_dir / "libfluxon_commu_core-abc.so").write_bytes(old_core.read_bytes())
             _WHEEL_HELPER.create_wheel(str(wheel_path), str(source_dir))
 
             core_source = root / "libfluxon_commu_core.so"
             probe_source = root / "libfluxon_rdma_probe.so"
-            core_source.write_text("new-core", encoding="utf-8")
-            probe_source.write_text("new-probe", encoding="utf-8")
+            subprocess.run(
+                ["cc", "-shared", "-fPIC", "-Wl,-soname,libfluxon_commu_core.so", "-o", str(core_source), "-xc", "-"],
+                input="int new_core(void) { return 2; }\n",
+                text=True,
+                check=True,
+            )
+            subprocess.run(
+                ["cc", "-shared", "-fPIC", "-Wl,-soname,libfluxon_rdma_probe.so", "-o", str(probe_source), "-xc", "-"],
+                input="int new_probe(void) { return 3; }\n",
+                text=True,
+                check=True,
+            )
 
             _WHEEL_HELPER.install_shared_libraries(
                 str(wheel_path),
@@ -65,15 +82,26 @@ class WheelRuntimeHelperTest(unittest.TestCase):
                 },
             )
 
-            with zipfile.ZipFile(wheel_path, "r") as zip_ref:
-                self.assertEqual(
-                    zip_ref.read("fluxon_pyo3.libs/libfluxon_commu_core-abc.so").decode("utf-8"),
-                    "new-core",
-                )
-                self.assertEqual(
-                    zip_ref.read("fluxon_pyo3.libs/libfluxon_rdma_probe.so").decode("utf-8"),
-                    "new-probe",
-                )
+            extract_root = Path(_WHEEL_HELPER.extract_wheel(str(wheel_path)))
+            try:
+                core_installed = extract_root / "fluxon_pyo3.libs" / "libfluxon_commu_core-abc.so"
+                probe_installed = extract_root / "fluxon_pyo3.libs" / "libfluxon_rdma_probe.so"
+                self.assertTrue(core_installed.is_file())
+                self.assertTrue(probe_installed.is_file())
+                for installed_path, expected_soname in (
+                    (core_installed, "libfluxon_commu_core.so"),
+                    (probe_installed, "libfluxon_rdma_probe.so"),
+                ):
+                    readelf_out = subprocess.run(
+                        ["readelf", "-d", str(installed_path)],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    ).stdout
+                    self.assertIn(expected_soname, readelf_out)
+                    self.assertIn("$ORIGIN", readelf_out)
+            finally:
+                subprocess.run(["rm", "-rf", str(extract_root)], check=True)
 
     def test_normalize_wheel_lib_rpaths_sets_extension_runpath_to_wheel_libs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -111,6 +139,106 @@ class WheelRuntimeHelperTest(unittest.TestCase):
                 self.assertIn("$ORIGIN/../fluxon_pyo3.libs", readelf_out)
             finally:
                 subprocess.run(["rm", "-rf", str(extract_root)], check=True)
+
+    def test_add_shared_libraries_sets_runpath_for_added_shared_objects(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            wheel_path = root / "fluxon_pyo3-0.0.0-py3-none-any.whl"
+            source_dir = root / "wheel_src"
+            pkg_dir = source_dir / "fluxon_pyo3"
+            dist_dir = source_dir / "fluxon_pyo3-0.0.0.dist-info"
+            pkg_dir.mkdir(parents=True)
+            dist_dir.mkdir(parents=True)
+            (pkg_dir / "__init__.py").write_text("", encoding="utf-8")
+            (dist_dir / "WHEEL").write_text("Wheel-Version: 1.0\nTag: py3-none-any\n", encoding="utf-8")
+            (dist_dir / "METADATA").write_text(
+                "Metadata-Version: 2.1\nName: fluxon-pyo3\nVersion: 0.0.0\n",
+                encoding="utf-8",
+            )
+            _WHEEL_HELPER.create_wheel(str(wheel_path), str(source_dir))
+
+            lib_source = root / "libruntime_dep.so.1"
+            subprocess.run(
+                ["cc", "-shared", "-fPIC", "-Wl,-soname,libruntime_dep.so.1", "-o", str(lib_source), "-xc", "-"],
+                input="int runtime_dep_dummy(void) { return 0; }\n",
+                text=True,
+                check=True,
+            )
+
+            _WHEEL_HELPER.add_shared_libraries(
+                str(wheel_path),
+                [str(lib_source)],
+            )
+
+            extract_root = Path(_WHEEL_HELPER.extract_wheel(str(wheel_path)))
+            try:
+                lib_path = extract_root / "fluxon_pyo3.libs" / "libruntime_dep.so.1"
+                readelf_out = subprocess.run(
+                    ["readelf", "-d", str(lib_path)],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout
+                self.assertIn("$ORIGIN", readelf_out)
+            finally:
+                subprocess.run(["rm", "-rf", str(extract_root)], check=True)
+
+    def test_merge_binary_wheel_copies_runtime_payload_and_runtime_tag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pure_wheel = root / "fluxon-0.2.1-py3-none-any.whl"
+            runtime_wheel = root / "fluxon_pyo3-0.2.1-cp38-abi3-manylinux_2_28_x86_64.whl"
+            output_wheel = root / "fluxon-0.2.1-cp38-abi3-manylinux_2_28_x86_64.whl"
+
+            pure_src = root / "pure_src"
+            pure_pkg = pure_src / "fluxon_py"
+            pure_dist = pure_src / "fluxon-0.2.1.dist-info"
+            pure_pkg.mkdir(parents=True)
+            pure_dist.mkdir(parents=True)
+            (pure_pkg / "__init__.py").write_text("__version__ = '0.2.1'\n", encoding="utf-8")
+            (pure_dist / "WHEEL").write_text(
+                "Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+                encoding="utf-8",
+            )
+            (pure_dist / "METADATA").write_text(
+                "Metadata-Version: 2.1\nName: fluxon\nVersion: 0.2.1\n",
+                encoding="utf-8",
+            )
+            _WHEEL_HELPER.create_wheel(str(pure_wheel), str(pure_src))
+
+            runtime_src = root / "runtime_src"
+            runtime_pkg = runtime_src / "fluxon_pyo3"
+            runtime_libs = runtime_src / "fluxon_pyo3.libs"
+            runtime_dist = runtime_src / "fluxon_pyo3-0.2.1.dist-info"
+            runtime_pkg.mkdir(parents=True)
+            runtime_libs.mkdir(parents=True)
+            runtime_dist.mkdir(parents=True)
+            (runtime_pkg / "__init__.py").write_text("", encoding="utf-8")
+            (runtime_pkg / "fluxon_pyo3.abi3.so").write_bytes(b"runtime-so")
+            (runtime_libs / "libruntime.so").write_bytes(b"runtime-lib")
+            (runtime_dist / "WHEEL").write_text(
+                "Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: false\nTag: cp38-abi3-manylinux_2_28_x86_64\n",
+                encoding="utf-8",
+            )
+            (runtime_dist / "METADATA").write_text(
+                "Metadata-Version: 2.1\nName: fluxon-pyo3\nVersion: 0.2.1\n",
+                encoding="utf-8",
+            )
+            _WHEEL_HELPER.create_wheel(str(runtime_wheel), str(runtime_src))
+
+            _WHEEL_HELPER.merge_binary_wheel(
+                output_wheel_path=str(output_wheel),
+                pure_python_wheel_path=str(pure_wheel),
+                runtime_wheel_path=str(runtime_wheel),
+            )
+
+            with zipfile.ZipFile(output_wheel, "r") as zip_ref:
+                self.assertEqual(zip_ref.read("fluxon_py/__init__.py").decode("utf-8"), "__version__ = '0.2.1'\n")
+                self.assertEqual(zip_ref.read("fluxon_pyo3/fluxon_pyo3.abi3.so"), b"runtime-so")
+                self.assertEqual(zip_ref.read("fluxon_pyo3.libs/libruntime.so"), b"runtime-lib")
+                wheel_text = zip_ref.read("fluxon-0.2.1.dist-info/WHEEL").decode("utf-8")
+                self.assertIn("Root-Is-Purelib: false", wheel_text)
+                self.assertIn("Tag: cp38-abi3-manylinux_2_28_x86_64", wheel_text)
 
 
 if __name__ == "__main__":

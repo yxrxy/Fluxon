@@ -13,6 +13,7 @@ pub mod kvlease;
 pub mod master_kv_router;
 pub mod master_lease_manager;
 pub mod master_seg_manager;
+pub mod master_ui_monitor;
 pub mod memholder;
 pub mod metric_reporter;
 pub mod metrics;
@@ -1443,7 +1444,7 @@ async fn run_master_impl(
             etcd_endpoints: config.etcd_endpoints.clone(),
             cluster_name: config.cluster_name.clone(),
             instance_name: Some(config.instance_key.clone()),
-            port: Some(config.port),
+            port: None,
             metadata,
             local_ipc_root: None,
             rdma_control_init,
@@ -1451,7 +1452,7 @@ async fn run_master_impl(
             network: config.network.clone(),
         },
         p2p_arg: P2pModuleNewArg::new(
-            config.p2p_listen_port,
+            config.port,
             tcp_thread_transport_tuning_from_test_spec_config(&config.test_spec_config),
             config.test_spec_config.disable_crossowner_ipc,
             config.test_spec_config.iceoryx_external_busy_poll,
@@ -1521,7 +1522,12 @@ async fn run_master_impl(
         shutdown_waiter,
     );
 
-    Ok((Arc::new(framework), config))
+    let framework = Arc::new(framework);
+    if crate::master_ui_monitor::try_start_master_ui_monitor(framework.clone(), &config)? {
+        return Ok((framework, config));
+    }
+
+    Ok((framework, config))
 }
 
 pub async fn run_master(

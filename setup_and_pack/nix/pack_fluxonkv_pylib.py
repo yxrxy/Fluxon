@@ -17,8 +17,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-import yaml
-
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
 PARENT_SCRIPTS_DIR = SCRIPT_DIR.parent
@@ -31,10 +29,13 @@ if parent_scripts_dir_str in sys.path:
     sys.path.remove(parent_scripts_dir_str)
 sys.path.insert(0, parent_scripts_dir_str)
 
+import yaml
+
 from lib_layout import (
     apply_layout,
     build_layout,
     build_runtime_targets,
+    load_experiment_config_root,
     load_experiment_spec,
     render_layout_summary,
 )
@@ -44,7 +45,6 @@ from setup_and_pack.closed_sdk_contract import (
 )
 from utils.sudo_prefix_utils import host_sudo_prefix
 import utils as script_utils
-CONTAINER_LIBPYTHON_PLACEHOLDER_PATH = "/opt/_internal/cpython-3.10.19/lib/libpython3.10.a"
 ABI3_SMOKE_TEST_INTERPRETERS = (
     "/opt/python/cp310-cp310/bin/python",
     "/opt/python/cp311-cp311/bin/python",
@@ -128,9 +128,9 @@ GENERATED_RELEASE_RELATIVE_ROOT = Path("fluxon_release") / "generated"
 GENERATED_TOOLCHAIN_DIR_NAME = "toolchain"
 PREPARE_BUILD_GENERATED_DIR_NAME = "prepare_build"
 PREPARE_BUILD_RESOURCE_STORE_DIR_NAME = "resource_store"
-LIBPYTHON_PLACEHOLDER_FILE_NAME = "libpython3.10.a"
 PUBLIC_CLOSED_SDK_REPO_RELATIVE_ROOT = Path("fluxon_release") / "closed_sdk"
-PUBLIC_WHEEL_RUNTIME_HELPER_REPO_RELATIVE_PATH = Path("setup_and_pack") / "wheel_runtime_helper.py"
+PUBLIC_WHEEL_RUNTIME_HELPER_REPO_RELATIVE_PATH = Path("setup_and_pack") / "utils" / "wheel_runtime_helper.py"
+PACK_RELEASE_IN_CONTAINER_REPO_RELATIVE_PATH = Path("setup_and_pack") / "nix" / "pack_release_in_container.py"
 WHEEL_FINALIZE_STEP_KIND_ADD_OFFLINE_RDMA_SHARED_LIBRARIES = "add_offline_rdma_shared_libraries"
 WHEEL_FINALIZE_STEP_KIND_ADD_NATIVE_PLUGINS = "add_native_plugins"
 WHEEL_FINALIZE_STEP_KIND_ADD_VENDOR_RUNTIME = "add_vendor_runtime"
@@ -171,7 +171,8 @@ PYO3_WORKSPACE_HELPER_RELATIVE_PATHS = (
     "setup_and_pack/public_workspace_contract.py",
     "setup_and_pack/pub_prepare_build.py",
     "setup_and_pack/pub_prepare_build.yaml",
-    "setup_and_pack/wheel_runtime_helper.py",
+    "setup_and_pack/nix/pack_release_in_container.py",
+    "setup_and_pack/utils/wheel_runtime_helper.py",
     "setup_and_pack/nix/lib_layout.py",
 )
 PYO3_INPUT_RELATIVE_PATHS_COMMON = (
@@ -684,7 +685,7 @@ def main() -> int:
     args = parser.parse_args()
 
     config_path = args.config.resolve()
-    cfg = _load_yaml_mapping(config_path)
+    cfg = load_experiment_config_root(config_path=config_path)
     spec = load_experiment_spec(config_path=config_path)
     runtime_targets = build_runtime_targets(spec=spec)
     manylinux_cfg = _require_mapping(cfg, "manylinux")
@@ -769,10 +770,6 @@ def main() -> int:
                 selected_backend_plan=selected_backend_plan,
             )
         workspace_mount_dir = _resolve_workspace_mount_dir(profile_dir=profile_dir)
-        libpython_placeholder_path = _ensure_generated_libpython_placeholder(
-            spec=spec,
-            runtime_target=runtime_target,
-        )
         if args.run:
             _clear_directory(release_dir)
             cargo_registry_dir.mkdir(parents=True, exist_ok=True)
@@ -795,7 +792,6 @@ def main() -> int:
                 published_profile_dir=published_profile_dir,
                 selected_backend_plan=selected_backend_plan,
             ),
-            libpython_placeholder_path=libpython_placeholder_path,
             cargo_registry_dir=cargo_registry_dir,
             cargo_git_dir=cargo_git_dir,
         )
@@ -887,6 +883,14 @@ def _backend_prepare_build_scenario(*, selected_backend_plan: dict) -> str | Non
     return NATIVE_RUNTIME_PREPARE_SCENARIOS[native_object_kind]
 
 
+def _bridge_prebuilt_dynamic_target_support_dir_names(*, spec, selected_backend_plan: dict) -> tuple[str, ...]:
+    if spec.profile_source.source_kind != "bridge_prebuilt":
+        return ()
+    if _backend_prepare_build_scenario(selected_backend_plan=selected_backend_plan) is None:
+        return ()
+    return tuple(spec.profile_layout.target_support_dir_names)
+
+
 def _initialize_prepare_target_placeholder_dir(*, target_root: Path, dir_name: str) -> None:
     target_dir = target_root / dir_name
     if target_dir.is_symlink() or target_dir.is_file():
@@ -923,6 +927,14 @@ def _initialize_prepare_target_placeholder_dir(*, target_root: Path, dir_name: s
         return
 
 
+def _initialize_target_support_placeholder_dir(*, target_root: Path, dir_name: str) -> None:
+    target_dir = target_root / dir_name
+    if target_dir.is_symlink() or target_dir.is_file():
+        target_dir.unlink()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_dir.chmod(0o777)
+
+
 def _materialize_bridge_prebuilt_external_mount_authorities(
     *,
     spec,
@@ -941,11 +953,13 @@ def _materialize_bridge_prebuilt_external_mount_authorities(
     if prepare_build_scenario is None:
         return
     build_root = Path(build_root_path).resolve()
-    generated_system_dir = _ensure_generated_system_dir(
-        spec=spec,
-        runtime_target=runtime_target,
-    )
     prepare_target_dir_names = _load_prepare_target_dir_names(build_root, prepare_build_scenario)
+    dynamic_target_support_dir_names = set(
+        _bridge_prebuilt_dynamic_target_support_dir_names(
+            spec=spec,
+            selected_backend_plan=selected_backend_plan,
+        )
+    )
     target_root = build_root / "fluxon_rs" / "target"
     missing_mount_names: list[str] = []
     for mount_spec in selected_backend_plan["external_mounts"]:
@@ -974,6 +988,8 @@ def _materialize_bridge_prebuilt_external_mount_authorities(
         if not missing_entries:
             continue
         missing_prepare_dir_names.append(dir_name)
+        if dir_name in prepare_target_dir_names:
+            _initialize_prepare_target_placeholder_dir(target_root=target_root, dir_name=dir_name)
     missing_target_support_dir_names: list[str] = []
     target_root = build_root / "fluxon_rs" / "target"
     for dir_name in spec.profile_layout.target_support_dir_names:
@@ -981,18 +997,10 @@ def _materialize_bridge_prebuilt_external_mount_authorities(
         if candidate_root.is_dir():
             continue
         missing_target_support_dir_names.append(dir_name)
+        if dir_name in dynamic_target_support_dir_names:
+            _initialize_target_support_placeholder_dir(target_root=target_root, dir_name=dir_name)
     if not missing_mount_names and not missing_prepare_dir_names and not missing_target_support_dir_names:
         return
-    if not missing_prepare_dir_names:
-        _seed_bridge_prebuilt_native_runtime_store_from_published_profile(
-            spec=spec,
-            runtime_target=runtime_target,
-            transport_backend=transport_backend,
-            selected_backend_plan=selected_backend_plan,
-            build_root=build_root,
-            generated_system_dir=generated_system_dir,
-            writable_native_dir_name=writable_native_dir_name,
-        )
     unresolved_mount_errors: list[str] = []
     for mount_spec in selected_backend_plan["external_mounts"]:
         candidate_root = (build_root / mount_spec["project_relative_path"]).resolve()
@@ -1000,65 +1008,12 @@ def _materialize_bridge_prebuilt_external_mount_authorities(
             mount_name=mount_spec["name"],
             candidate_root=candidate_root,
         )
-        if not missing_entries:
+        if (
+            missing_entries
+            and mount_spec["name"] in prepare_target_dir_names
+            and candidate_root.is_dir()
+        ):
             continue
-        unresolved_mount_errors.append(
-            f"mount={mount_spec['name']} path={candidate_root} missing={', '.join(missing_entries)}"
-        )
-    if not unresolved_mount_errors:
-        unresolved_prepare_dir_errors: list[str] = []
-        for dir_name in _required_native_dir_names(selected_backend_plan=selected_backend_plan):
-            if dir_name == writable_native_dir_name:
-                continue
-            candidate_root = build_root / "fluxon_rs" / "target" / dir_name
-            missing_entries = _bridge_prebuilt_seed_native_dir_missing_entries(
-                dir_name=dir_name,
-                candidate_dir=candidate_root,
-            )
-            if not missing_entries:
-                continue
-            unresolved_prepare_dir_errors.append(
-                f"dir={dir_name} path={candidate_root} missing={', '.join(missing_entries)}"
-            )
-        unresolved_target_support_errors = [
-            f"dir={dir_name} path={build_root / 'fluxon_rs' / 'target' / dir_name}"
-            for dir_name in spec.profile_layout.target_support_dir_names
-            if not (build_root / "fluxon_rs" / "target" / dir_name).is_dir()
-        ]
-        if not unresolved_prepare_dir_errors and not unresolved_target_support_errors:
-            return
-    prepare_build_path = _require_prepare_build_authority_path(repo_root=build_root)
-    if not prepare_build_path.is_file():
-        raise RuntimeError(f"bridge_prebuilt prepare_build.py is missing: {prepare_build_path}")
-    prepare_build_resource_store = _ensure_generated_prepare_build_resource_store(
-        generated_system_dir=generated_system_dir,
-    )
-    prepare_build_env = os.environ.copy()
-    prepare_build_env["FLUXON_PREPARE_BUILD_PROJECT_ROOT"] = str(build_root)
-    prepare_build_env["FLUXON_PREPARE_BUILD_RESOURCE_STORE"] = str(prepare_build_resource_store)
-    prepare_build_env["CARGO_TARGET_DIR"] = str(build_root / "fluxon_rs" / "target")
-    if selected_backend_plan["rdma_backend"] == "closed_sdk":
-        authoritative_closed_sdk_root = _discover_authoritative_vendor_runtime_sdk_root(
-            build_root=build_root,
-            base_system=spec.base_system,
-            runtime_abi_key=runtime_target.runtime_abi_key,
-            closed_sdk_search_roots=spec.profile_source.closed_sdk_search_roots,
-        )
-        if authoritative_closed_sdk_root is not None:
-            prepare_build_env["FLUXON_COMMU_CLOSED_SDK_ROOT"] = str(authoritative_closed_sdk_root)
-    subprocess.run(
-        ["python3", str(prepare_build_path), "--scenario", prepare_build_scenario],
-        cwd=str(prepare_build_path.parent.parent),
-        env=prepare_build_env,
-        check=True,
-    )
-    unresolved_mount_errors: list[str] = []
-    for mount_spec in selected_backend_plan["external_mounts"]:
-        candidate_root = (build_root / mount_spec["project_relative_path"]).resolve()
-        missing_entries = _validate_external_mount_candidate(
-            mount_name=mount_spec["name"],
-            candidate_root=candidate_root,
-        )
         if not missing_entries:
             continue
         unresolved_mount_errors.append(
@@ -1073,6 +1028,12 @@ def _materialize_bridge_prebuilt_external_mount_authorities(
             dir_name=dir_name,
             candidate_dir=candidate_root,
         )
+        if (
+            missing_entries
+            and dir_name in prepare_target_dir_names
+            and candidate_root.is_dir()
+        ):
+            continue
         if not missing_entries:
             continue
         unresolved_prepare_dir_errors.append(
@@ -1085,7 +1046,7 @@ def _materialize_bridge_prebuilt_external_mount_authorities(
     ]
     if unresolved_mount_errors or unresolved_prepare_dir_errors or unresolved_target_support_errors:
         raise RuntimeError(
-            "bridge_prebuilt prepare_build authority remained incomplete after prepare_build: "
+            "bridge_prebuilt authority placeholders remained incomplete: "
             + "; ".join(
                 [
                     *unresolved_mount_errors,
@@ -1107,12 +1068,16 @@ def _seed_bridge_prebuilt_native_runtime_store_from_published_profile(
     writable_native_dir_name: str | None,
 ) -> None:
     native_target_dir = build_root / "fluxon_rs" / "target"
-    seed_cxxpacked_dir = _resolve_bridge_prebuilt_seed_native_dir(
+    # This optional host-side seed is only a reuse optimization for bridge_prebuilt.
+    # The required cxxpacked payload is still materialized inside the manylinux container
+    # by pub_prepare_build.py before the Rust build runs.
+    reusable_cxxpacked_seed_dir = _resolve_bridge_prebuilt_seed_native_dir(
         spec=spec,
         runtime_target=runtime_target,
         transport_backend=transport_backend,
         dir_name=CXXPACKED_DIR_NAME,
         build_root=build_root,
+        allow_missing=True,
     )
     for dir_name in _required_native_dir_names(selected_backend_plan=selected_backend_plan):
         if writable_native_dir_name is not None and dir_name == writable_native_dir_name:
@@ -1133,7 +1098,7 @@ def _seed_bridge_prebuilt_native_runtime_store_from_published_profile(
                 generated_system_dir=generated_system_dir,
                 runtime_target=runtime_target,
                 seed_vendor_runtime_dir=seed_vendor_runtime_dir,
-                seed_cxxpacked_dir=seed_cxxpacked_dir,
+                reusable_cxxpacked_seed_dir=reusable_cxxpacked_seed_dir,
             )
             _replace_workspace_entry(
                 link_path=link_path,
@@ -1146,7 +1111,10 @@ def _seed_bridge_prebuilt_native_runtime_store_from_published_profile(
             transport_backend=transport_backend,
             dir_name=dir_name,
             build_root=build_root,
+            allow_missing=True,
         )
+        if seed_dir is None:
+            continue
         _replace_workspace_entry(
             link_path=link_path,
             target_path=str(seed_dir),
@@ -1352,7 +1320,7 @@ def _materialize_bridge_prebuilt_vendor_runtime_seed(
     generated_system_dir: Path,
     runtime_target,
     seed_vendor_runtime_dir: Path,
-    seed_cxxpacked_dir: Path,
+    reusable_cxxpacked_seed_dir: Path | None,
 ) -> Path:
     stage_parent = _ensure_generated_dir(
         generated_system_dir / "bridge_prebuilt_external_mounts" / runtime_target.runtime_abi_key
@@ -1369,20 +1337,27 @@ def _materialize_bridge_prebuilt_vendor_runtime_seed(
             target_path=staged_root,
         )
     driver_config_source_dir = None
-    for candidate_dir in (
+    candidate_driver_config_dirs = [
         seed_vendor_runtime_dir / "etc" / "libibverbs.d",
-        seed_cxxpacked_dir / "etc" / "libibverbs.d",
-    ):
+    ]
+    if reusable_cxxpacked_seed_dir is not None:
+        candidate_driver_config_dirs.append(reusable_cxxpacked_seed_dir / "etc" / "libibverbs.d")
+    for candidate_dir in candidate_driver_config_dirs:
         if candidate_dir.is_dir() and any(
             path.is_file() and path.name.endswith(".driver") for path in candidate_dir.iterdir()
         ):
             driver_config_source_dir = candidate_dir
             break
     if driver_config_source_dir is None:
+        cxxpacked_driver_hint = (
+            str(reusable_cxxpacked_seed_dir / "etc" / "libibverbs.d")
+            if reusable_cxxpacked_seed_dir is not None
+            else "<missing cxxpacked seed>"
+        )
         raise RuntimeError(
             "vendor runtime driver config dir is missing from both vendor_runtime and cxxpacked seeds: "
             f"{seed_vendor_runtime_dir / 'etc' / 'libibverbs.d'}, "
-            f"{seed_cxxpacked_dir / 'etc' / 'libibverbs.d'}"
+            f"{cxxpacked_driver_hint}"
         )
     staged_driver_config_dir = staged_root / "etc" / "libibverbs.d"
     if staged_driver_config_dir.exists() and staged_driver_config_dir.resolve() == driver_config_source_dir.resolve():
@@ -1437,24 +1412,6 @@ def _ensure_generated_prepare_build_resource_store(*, generated_system_dir: Path
     return resource_store_dir.resolve()
 
 
-def _ensure_generated_libpython_placeholder(*, spec, runtime_target) -> Path:
-    generated_system_dir = _ensure_generated_system_dir(
-        spec=spec,
-        runtime_target=runtime_target,
-    )
-    toolchain_dir = _ensure_generated_dir(generated_system_dir / GENERATED_TOOLCHAIN_DIR_NAME)
-    placeholder_path = toolchain_dir / LIBPYTHON_PLACEHOLDER_FILE_NAME
-    if placeholder_path.exists():
-        if not placeholder_path.is_file():
-            raise RuntimeError(f"generated libpython placeholder must be a file: {placeholder_path}")
-        return placeholder_path.resolve()
-    subprocess.run(
-        ["ar", "rcs", str(placeholder_path)],
-        check=True,
-    )
-    return placeholder_path.resolve()
-
-
 def _build_docker_argv(
     *,
     spec,
@@ -1468,7 +1425,6 @@ def _build_docker_argv(
     profile_dir: Path,
     external_mounts: tuple[dict, ...],
     extra_host_mount_paths: tuple[Path, ...],
-    libpython_placeholder_path: Path,
     cargo_registry_dir: Path,
     cargo_git_dir: Path,
 ) -> list[str]:
@@ -1478,6 +1434,7 @@ def _build_docker_argv(
     protoc_root = f"{CONTAINER_INSTANCE_TARGET_PATH}/{_native_object_dir_name(object_id=protoc_object_id)}"
     protoc_path = f"{protoc_root}/bin/protoc"
     prepare_build_scenario = _backend_prepare_build_scenario(selected_backend_plan=selected_backend_plan)
+    finalize_script_path = Path("/workspace") / PACK_RELEASE_IN_CONTAINER_REPO_RELATIVE_PATH
     container_lines = [
         "set -euo pipefail",
         "cleanup_nix_profile() { chmod -R 777 /nix_profile >/dev/null 2>&1 || true; }",
@@ -1594,9 +1551,16 @@ def _build_docker_argv(
             f"--out {shlex.quote(CONTAINER_RELEASE_PATH)} "
             "--no-default-features "
             f"--features {shlex.quote(_transport_backend_feature_csv(transport_backend, rdma_backend))}",
-            "python3 - <<'PY'",
-            _render_container_wheel_finalize_python(selected_backend_plan=selected_backend_plan),
-            "PY",
+            "python3 "
+            + shlex.quote(str(finalize_script_path))
+            + " --release-dir "
+            + shlex.quote(CONTAINER_RELEASE_PATH)
+            + " --target-root "
+            + shlex.quote(CONTAINER_INSTANCE_TARGET_PATH)
+            + " --closed-sdk-root "
+            + shlex.quote(CONTAINER_CLOSED_SDK_RUNTIME_ROOT_PATH)
+            + " --wheel-finalize-steps-json "
+            + shlex.quote(json.dumps(list(selected_backend_plan["wheel_finalize_steps"]))),
         ]
     )
     container_cmd = "\n".join(container_lines)
@@ -1604,6 +1568,8 @@ def _build_docker_argv(
         "docker",
         "run",
         "--rm",
+        "--entrypoint",
+        "/bin/bash",
         "--ulimit",
         f"nofile={DOCKER_NOFILE_LIMIT}:{DOCKER_NOFILE_LIMIT}",
         *docker_env_args,
@@ -1618,15 +1584,12 @@ def _build_docker_argv(
         "-v",
         f"{profile_dir}:{CONTAINER_PROFILE_PATH}",
         "-v",
-        f"{libpython_placeholder_path}:{CONTAINER_LIBPYTHON_PLACEHOLDER_PATH}",
-        "-v",
         f"{cargo_registry_dir}:/root/.cargo/registry",
         "-v",
         f"{cargo_git_dir}:/root/.cargo/git",
         "-w",
         "/workspace",
         runtime_image_ref,
-        "bash",
         "-lc",
         container_cmd,
     ]
@@ -1743,7 +1706,15 @@ def _bridge_prebuilt_direct_mount_paths(
         if dir_name in prepare_target_dir_names:
             continue
         mount_paths.append((native_runtime_dir / dir_name).resolve())
+    dynamic_target_support_dir_names = set(
+        _bridge_prebuilt_dynamic_target_support_dir_names(
+            spec=spec,
+            selected_backend_plan=selected_backend_plan,
+        )
+    )
     for dir_name in spec.profile_layout.target_support_dir_names:
+        if dir_name in dynamic_target_support_dir_names:
+            continue
         mount_paths.append((target_support_dir / dir_name).resolve())
 
     seen: set[Path] = set()
@@ -1754,319 +1725,6 @@ def _bridge_prebuilt_direct_mount_paths(
             deduped_mount_paths.append(path)
     return tuple(deduped_mount_paths)
 
-
-def _render_container_wheel_finalize_python(*, selected_backend_plan: dict) -> str:
-    rdma_backend = selected_backend_plan["rdma_backend"]
-    helper_path = (
-        Path("/workspace")
-        / PUBLIC_WHEEL_RUNTIME_HELPER_REPO_RELATIVE_PATH
-    )
-    lines = [
-        "import importlib.util",
-        "import os",
-        "import shutil",
-        "import subprocess",
-        "import sys",
-        "import tempfile",
-        "import zipfile",
-        "from pathlib import Path",
-        "",
-        f"abi3_interpreters = {repr(ABI3_SMOKE_TEST_INTERPRETERS)}",
-        f"release_dir = Path({json.dumps(CONTAINER_RELEASE_PATH)})",
-        f"target_root = Path({json.dumps(CONTAINER_INSTANCE_TARGET_PATH)})",
-        (
-            "closed_sdk_root = Path("
-            f"os.environ.get('FLUXON_COMMU_CLOSED_SDK_ROOT', {CONTAINER_CLOSED_SDK_RUNTIME_ROOT_PATH!r})"
-            ")"
-        ),
-        f"helper_path = Path({json.dumps(str(helper_path))})",
-        f"pack_helper_path = Path({json.dumps(str(Path('/workspace') / 'setup_and_pack' / 'nix' / 'pack_fluxonkv_pylib.py'))})",
-        "",
-        "def validate_zip_archive(path: Path) -> None:",
-        "    with zipfile.ZipFile(path, 'r') as zip_ref:",
-        "        bad_member = zip_ref.testzip()",
-        "    if bad_member is not None:",
-        "        raise RuntimeError(f'invalid zip member in {path}: {bad_member}')",
-        "",
-        "def first_existing(paths: list[Path], label: str) -> Path:",
-        "    for path in paths:",
-        "        if path.exists():",
-        "            return path",
-        "    raise RuntimeError(",
-        "        'missing offline RDMA wheel dependency '",
-        "        + label",
-        "        + ': '",
-        "        + ', '.join(str(path) for path in paths)",
-        "    )",
-        "",
-        "def resolve_native_runtime_root(dir_name: str) -> Path:",
-        "    candidates = [",
-        "        closed_sdk_root / 'native' / dir_name,",
-        "        closed_sdk_root / dir_name,",
-        "        target_root / dir_name,",
-        "        Path('/nix_profile/native') / dir_name,",
-        "    ]",
-        "    for path in candidates:",
-        "        if path.is_dir():",
-        "            return path",
-        "    raise RuntimeError(",
-        "        'missing native runtime dir '",
-        "        + dir_name",
-        "        + ': '",
-        "        + ', '.join(str(path) for path in candidates)",
-        "    )",
-        "",
-        "def resolve_native_lib_roots(dir_name: str) -> list[Path]:",
-        "    native_root = resolve_native_runtime_root(dir_name)",
-        "    lib_roots: list[Path] = []",
-        "    seen: set[str] = set()",
-        "    for path in (",
-        "        native_root / 'lib' / 'x86_64-linux-gnu',",
-        "        native_root / 'lib64',",
-        "        native_root / 'lib',",
-        "    ):",
-        "        if not path.is_dir():",
-        "            continue",
-        "        path_key = str(path.resolve())",
-        "        if path_key in seen:",
-        "            continue",
-        "        seen.add(path_key)",
-        "        lib_roots.append(path)",
-        "    if not lib_roots:",
-        "        raise RuntimeError(f'native runtime contains no library dirs: {native_root}')",
-        "    return lib_roots",
-        "",
-        "def resolve_offline_rdma_runtime(target_root: Path, packed_dir_name: str) -> list[str]:",
-        "    packed_lib_roots = resolve_native_lib_roots(packed_dir_name)",
-        "    scan_roots = [closed_sdk_root / 'lib']",
-        "    scan_roots.extend(packed_lib_roots)",
-        "    scan_roots.extend(lib_root / 'libibverbs' for lib_root in packed_lib_roots)",
-        "    runtime_libs: list[str] = []",
-        "    seen_runtime_libs: set[str] = set()",
-        "    for root in scan_roots:",
-        "        if not root.is_dir():",
-            "            continue",
-        "        for path in sorted(root.glob('*.so*')):",
-        "            if not path.is_file():",
-        "                continue",
-        "            path_key = str(path)",
-        "            if path_key in seen_runtime_libs:",
-        "                continue",
-        "            seen_runtime_libs.add(path_key)",
-        "            runtime_libs.append(str(path))",
-        "    if not runtime_libs:",
-        "        raise RuntimeError(f'no offline RDMA runtime shared libraries discovered under {scan_roots}')",
-        "    print(f'wheel finalize: discovered offline RDMA shared libs count={len(runtime_libs)}')",
-        "    return runtime_libs",
-        "",
-        "def smoke_test_abi3_wheel(wheel_path: Path) -> None:",
-        "    for interp in abi3_interpreters:",
-        "        if not Path(interp).exists():",
-        "            raise RuntimeError(f'abi3 interpreter is missing: {interp}')",
-        "    clean_env = os.environ.copy()",
-        "    clean_env.pop('LD_LIBRARY_PATH', None)",
-        "    with tempfile.TemporaryDirectory(prefix='fluxon_pyo3_smoke_') as tmp_dir:",
-        "        tmp_root = Path(tmp_dir)",
-        "        for interp in abi3_interpreters:",
-        "            tag = Path(interp).parents[1].name",
-        "            venv_dir = tmp_root / f'venv_{tag}'",
-        "            subprocess.run([interp, '-m', 'venv', str(venv_dir)], check=True, cwd='/workspace', env=clean_env)",
-        "            venv_python = venv_dir / 'bin' / 'python'",
-        "            try:",
-        "                subprocess.run(",
-        "                    [str(venv_python), '-m', 'pip', 'install', '--no-deps', '--no-cache-dir', str(wheel_path)],",
-        "                    check=True,",
-        "                    cwd='/workspace',",
-        "                    env=clean_env,",
-        "                )",
-        "                subprocess.run(",
-        "                    [str(venv_python), '-c', 'import fluxon_pyo3; print(fluxon_pyo3.__file__)'],",
-        "                    check=True,",
-        "                    cwd='/workspace',",
-        "                    env=clean_env,",
-        "                    capture_output=True,",
-        "                    text=True,",
-        "                )",
-        "                print(f'wheel finalize: abi3 import OK {tag}')",
-        "            except subprocess.CalledProcessError as exc:",
-        "                print(",
-        "                    'wheel finalize: abi3 import warning '\n"
-        "                    + tag\n"
-        "                    + ' exit='\n"
-        "                    + str(exc.returncode)\n"
-        "                    + ' stdout='\n"
-        "                    + exc.stdout.strip()\n"
-        "                    + ' stderr='\n"
-        "                    + exc.stderr.strip()",
-        "                )",
-        "",
-        "def rewrite_wheel_python_init(wheel_path: Path, wau_module) -> None:",
-        "    temp_dir = wau_module.extract_wheel(str(wheel_path))",
-        "    pkg_name = wheel_path.name.split('-', 1)[0]",
-        "    pkg_dir = Path(temp_dir) / pkg_name",
-        "    pkg_dir.mkdir(parents=True, exist_ok=True)",
-        "    init_path = pkg_dir / '__init__.py'",
-        "    init_path.write_text(",
-        "        \"from .fluxon_pyo3 import *\\n\\n\"",
-        "        \"__doc__ = fluxon_pyo3.__doc__\\n\"",
-        "        \"if hasattr(fluxon_pyo3, '__all__'):\\n\"",
-        "        \"    __all__ = fluxon_pyo3.__all__\\n\",",
-        "        encoding='utf-8',",
-        "    )",
-        "    wau_module.create_wheel(str(wheel_path), temp_dir)",
-        "    shutil.rmtree(temp_dir)",
-        "",
-        "if not pack_helper_path.is_file():",
-        "    raise RuntimeError(f'pack helper is missing: {pack_helper_path}')",
-        "pack_helper_dir = str(pack_helper_path.parent)",
-        "if pack_helper_dir not in sys.path:",
-        "    sys.path.insert(0, pack_helper_dir)",
-        "pack_spec = importlib.util.spec_from_file_location('pack_fluxonkv_pylib_helper', pack_helper_path)",
-        "if pack_spec is None or pack_spec.loader is None:",
-        "    raise RuntimeError(f'failed to load pack helper: {pack_helper_path}')",
-        "packmod = importlib.util.module_from_spec(pack_spec)",
-        "sys.modules[pack_spec.name] = packmod",
-        "pack_spec.loader.exec_module(packmod)",
-        "_resolve_vendor_runtime_install_root = packmod._resolve_vendor_runtime_install_root",
-        "_select_vendor_runtime_packaged_replacements = packmod._select_vendor_runtime_packaged_replacements",
-        "_resolve_ibverbs_driver_config_dir = packmod._resolve_ibverbs_driver_config_dir",
-        "_validate_vendor_runtime_wheel_layout = packmod._validate_vendor_runtime_wheel_layout",
-        "_stage_vendor_runtime_closure = packmod._stage_vendor_runtime_closure",
-        "_extract_wheel_runtime_tree = packmod._extract_wheel_runtime_tree",
-        "_prune_unused_vendor_runtime_aliases = packmod._prune_unused_vendor_runtime_aliases",
-        "",
-        "if not helper_path.is_file():",
-        "    raise RuntimeError(f'wheel helper is missing: {helper_path}')",
-        "spec = importlib.util.spec_from_file_location('wheel_runtime_helper_module', helper_path)",
-        "if spec is None or spec.loader is None:",
-        "    raise RuntimeError(f'failed to load wheel helper: {helper_path}')",
-        "wau = importlib.util.module_from_spec(spec)",
-        "sys.modules[spec.name] = wau",
-        "spec.loader.exec_module(wau)",
-        "wheels = sorted(release_dir.glob('fluxon_pyo3-*.whl'))",
-        "if not wheels:",
-        "    raise RuntimeError(f'no fluxon_pyo3 wheel found in release dir: {release_dir}')",
-        "wheel_path = wheels[-1]",
-        "validate_zip_archive(wheel_path)",
-        "wau.normalize_wheel_lib_rpaths(str(wheel_path))",
-    ]
-    for step in selected_backend_plan["wheel_finalize_steps"]:
-        step_kind = step["kind"]
-        if step_kind == WHEEL_FINALIZE_STEP_KIND_ADD_OFFLINE_RDMA_SHARED_LIBRARIES:
-            lines.extend(
-                [
-                    f"rdma_runtime_libs = resolve_offline_rdma_runtime(target_root, {json.dumps(step['native_dir_name'])})",
-                    "wau.add_shared_libraries(",
-                    "    str(wheel_path),",
-                    "    rdma_runtime_libs,",
-                    ")",
-                ]
-            )
-            continue
-        if step_kind == WHEEL_FINALIZE_STEP_KIND_ADD_NATIVE_PLUGINS:
-            native_object_id = step["native_object_id"]
-            if native_object_id is None:
-                raise RuntimeError(f"wheel finalize step requires native_object_id: {rdma_backend}.{step_kind}")
-            native_dir_name = _native_object_dir_name(object_id=native_object_id)
-            relative_subdir = step["relative_subdir"]
-            if relative_subdir is None:
-                raise RuntimeError(f"wheel finalize step requires relative_subdir: {rdma_backend}.{step_kind}")
-            lines.extend(
-                [
-                    f"native_root = resolve_native_runtime_root({json.dumps(native_dir_name)})",
-                    f"native_lib_roots = resolve_native_lib_roots({json.dumps(native_dir_name)})",
-                ]
-            )
-            plugin_bundle_name = step["plugin_bundle_name"]
-            if plugin_bundle_name is None:
-                raise RuntimeError(
-                    f"wheel finalize native plugins step requires plugin_bundle_name: {rdma_backend}"
-                )
-            lines.extend(
-                [
-                    f"plugins_candidates = [lib_root / {json.dumps(relative_subdir)} for lib_root in native_lib_roots]",
-                    "plugins_dir = next((path for path in plugins_candidates if path.is_dir()), None)",
-                    "if plugins_dir is not None:",
-                    "    extra_lib_candidates = [",
-                ]
-            )
-            for file_name in step["extra_library_file_names"]:
-                lines.append(f"        plugins_dir.parent / {json.dumps(file_name)},")
-            lines.extend(
-                [
-                    "    ]",
-                    "    extra_libs = [path for path in extra_lib_candidates if path.exists()]",
-                    "    with tempfile.TemporaryDirectory(prefix='fluxon_native_plugin_stage_') as tmp_dir:",
-                    f"        stage_dir = Path(tmp_dir) / {json.dumps(plugin_bundle_name)}",
-                    "        shutil.copytree(plugins_dir, stage_dir, symlinks=True)",
-                    "        for lib in extra_libs:",
-                    "            shutil.copy2(lib, stage_dir / lib.name)",
-                    f"        wau.add_plugins(str(wheel_path), str(stage_dir), {json.dumps(plugin_bundle_name)})",
-                    "    print(f'wheel finalize: packaged native plugins from {plugins_dir}')",
-                    "else:",
-                    "    print(",
-                    "        'wheel finalize: native plugin dir is absent, skipped plugins packaging: '",
-                    "        + ', '.join(str(path) for path in plugins_candidates)",
-                    "    )",
-                ]
-            )
-            continue
-        if step_kind == WHEEL_FINALIZE_STEP_KIND_ADD_VENDOR_RUNTIME:
-            lines.extend(
-                [
-                    "vendor_runtime_root, vendor_lib_paths = _resolve_vendor_runtime_install_root(",
-                    "    cargo_target_root=target_root,",
-                    ")",
-                    "with _extract_wheel_runtime_tree(wheel_path) as (wheel_extension_path, wheel_bundled_lib_dirs):",
-                    "    bundled_name_map = {}",
-                    "    for bundled_lib_dir in wheel_bundled_lib_dirs:",
-                    "        bundled_name_map.update(wau.get_repaired_lib_name_map(str(bundled_lib_dir)))",
-                    "    with tempfile.TemporaryDirectory(prefix='fluxon_vendor_runtime_stage_') as tmp_dir:",
-                    "        runtime_stage_dir = Path(tmp_dir)",
-                    "        extra_runtime_libs = _stage_vendor_runtime_closure(",
-                    "            wheel_extension_path=wheel_extension_path,",
-                    "            wheel_bundled_lib_dirs=wheel_bundled_lib_dirs,",
-                    "            vendor_root=vendor_runtime_root,",
-                    "            vendor_lib_paths=vendor_lib_paths,",
-                    "            stage_dir=runtime_stage_dir,",
-                    "            extra_ld_library_roots=[",
-                    f"                Path({CONTAINER_CLOSED_SDK_LIB_PATH!r}),",
-                    "                target_root / 'native_runtime' / 'lib64',",
-                    "                target_root / 'native_runtime' / 'lib',",
-                    "                target_root / 'native_runtime' / 'lib' / 'x86_64-linux-gnu',",
-                    "            ],",
-                    "        )",
-                    "        packaged_replacements = _select_vendor_runtime_packaged_replacements(",
-                    "            packaged_file_names=set(bundled_name_map),",
-                    "            vendor_lib_paths=vendor_lib_paths,",
-                    "        )",
-                    "        wau.add_shared_libraries(",
-                    "            str(wheel_path),",
-                    "            [str(path) for path in [*vendor_lib_paths, *extra_runtime_libs]],",
-                    "            packaged_lib_replacements=packaged_replacements,",
-                    "        )",
-                    "vendor_driver_config_dir = _resolve_ibverbs_driver_config_dir(",
-                    "    runtime_root=vendor_runtime_root,",
-                    "    runtime_label='vendor runtime install-root',",
-                    ")",
-                    "wau.add_plugins(str(wheel_path), str(vendor_driver_config_dir), 'libibverbs.d')",
-                    "_prune_unused_vendor_runtime_aliases(wheel_path)",
-                    "_validate_vendor_runtime_wheel_layout(wheel_path)",
-                    "print(f'wheel finalize: packaged vendor runtime from {vendor_runtime_root}')",
-                ]
-            )
-            continue
-        raise RuntimeError(f"unsupported wheel finalize step in rendered plan: {step_kind}")
-    lines.extend(
-        [
-            "rewrite_wheel_python_init(wheel_path, wau)",
-            "validate_zip_archive(wheel_path)",
-            "smoke_test_abi3_wheel(wheel_path)",
-            "validate_zip_archive(wheel_path)",
-            "print(f'wheel finalize: completed {wheel_path}')",
-        ]
-    )
-    return "\n".join(lines)
 def _build_target_cache_descriptor(
     *,
     spec,
@@ -2264,6 +1922,12 @@ def _prepare_target_cache_view(
         if prepare_build_scenario is not None
         else set()
     )
+    dynamic_target_support_dir_names = set(
+        _bridge_prebuilt_dynamic_target_support_dir_names(
+            spec=spec,
+            selected_backend_plan=selected_backend_plan,
+        )
+    )
     if native_object_id is not None:
         authoritative_native_export_dir = _require_authoritative_fluxon_native_export_dir(
             spec=spec,
@@ -2293,6 +1957,12 @@ def _prepare_target_cache_view(
             target_path=f"{CONTAINER_NATIVE_RUNTIME_PATH}/{dir_name}",
         )
     for dir_name in spec.profile_layout.target_support_dir_names:
+        if dir_name in dynamic_target_support_dir_names:
+            _prepare_writable_target_cache_support_dir(
+                target_cache_dir=target_cache_dir,
+                dir_name=dir_name,
+            )
+            continue
         source_dir = target_support_dir / dir_name
         if not source_dir.is_dir():
             raise RuntimeError(f"profile target support store is missing required dir: {source_dir}")
@@ -2348,6 +2018,18 @@ def _prepare_writable_target_cache_native_dir(
         dir_name=dir_name,
         authoritative_export_dir=authoritative_export_dir,
     )
+
+
+def _prepare_writable_target_cache_support_dir(*, target_cache_dir: Path, dir_name: str) -> None:
+    staged_dir = target_cache_dir / dir_name
+    if staged_dir.is_dir() and not staged_dir.is_symlink():
+        return
+    if staged_dir.is_symlink() or staged_dir.is_file():
+        staged_dir.unlink()
+    elif staged_dir.exists():
+        _sudo_remove_tree(staged_dir)
+    staged_dir.mkdir(parents=True, exist_ok=True)
+    staged_dir.chmod(0o777)
 
 
 def _writable_target_cache_native_dir_is_reusable(
@@ -2490,6 +2172,7 @@ def _resolve_external_mounts(
                 spec=spec,
                 profile_dir=profile_dir,
                 manylinux_cfg=manylinux_cfg,
+                selected_backend_plan=selected_backend_plan,
                 rdma_backend=selected_backend_plan["rdma_backend"],
                 mount_spec=mount_spec,
             )
@@ -2502,6 +2185,7 @@ def _resolve_external_mount(
     spec,
     profile_dir: Path,
     manylinux_cfg: dict,
+    selected_backend_plan: dict,
     rdma_backend: str,
     mount_spec: dict,
 ) -> dict:
@@ -2884,9 +2568,8 @@ def _extract_wheel_runtime_tree(wheel_path: Path):
         yield candidates[0], wheel_bundled_lib_dirs
 
 
-def _prune_unused_vendor_runtime_aliases(wheel_path: Path) -> None:
-    alias_names = ("libibverbs.so.1", "libmlx5.so.1")
-    with tempfile.TemporaryDirectory(prefix="fluxon_vendor_runtime_alias_prune_") as temp_dir_str:
+def _validate_wheel_bundled_soname_aliases(wheel_path: Path) -> None:
+    with tempfile.TemporaryDirectory(prefix="fluxon_vendor_runtime_alias_validate_") as temp_dir_str:
         temp_dir = Path(temp_dir_str)
         with zipfile.ZipFile(wheel_path, "r") as zip_ref:
             zip_ref.extractall(temp_dir)
@@ -2894,20 +2577,20 @@ def _prune_unused_vendor_runtime_aliases(wheel_path: Path) -> None:
         libs_dir = temp_dir / f"{pkg_name}.libs"
         if not libs_dir.is_dir():
             return
-        removed_any = False
-        for alias_name in alias_names:
-            alias_path = libs_dir / alias_name
-            if not alias_path.exists():
+        missing_aliases: list[str] = []
+        for lib_path in sorted(path for path in libs_dir.iterdir() if path.is_file() and ".so" in path.name):
+            try:
+                soname = _read_elf_soname(lib_path)
+            except subprocess.CalledProcessError:
                 continue
-            alias_path.unlink()
-            removed_any = True
-        if not removed_any:
-            return
-        with zipfile.ZipFile(wheel_path, "w", compression=zipfile.ZIP_DEFLATED) as zip_out:
-            for path in sorted(temp_dir.rglob("*")):
-                if path.is_dir():
-                    continue
-                zip_out.write(path, path.relative_to(temp_dir).as_posix())
+            if soname is None or soname == lib_path.name:
+                continue
+            if not (libs_dir / soname).is_file():
+                missing_aliases.append(soname)
+        if missing_aliases:
+            raise RuntimeError(
+                f"wheel is missing bundled SONAME aliases: {wheel_path}: {sorted(set(missing_aliases))}"
+            )
 
 
 def _read_elf_needed_names(path: Path) -> list[str]:

@@ -33,6 +33,30 @@ def _load_module(module_path: Path, module_name: str):
 
 
 class VendorRuntimeLayoutTest(unittest.TestCase):
+    def test_ensure_vendor_runtime_soname_aliases_materializes_missing_alias_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            staged_dir = root / "stage"
+            staged_dir.mkdir(parents=True)
+            lib_path = staged_dir / "libfabric.so"
+            lib_path.write_text("binary", encoding="utf-8")
+
+            for module_path in PACKER_MODULE_PATHS:
+                mod = _load_module(
+                    module_path=module_path,
+                    module_name=f"vendor_runtime_alias_materialize_{module_path.stem}",
+                )
+                mod._read_elf_soname = lambda _path: "libfabric.so.1"  # type: ignore[attr-defined]
+                aliased_paths = mod._ensure_vendor_runtime_soname_aliases(  # type: ignore[attr-defined]
+                    staged_paths=[lib_path],
+                    dest_dir=staged_dir,
+                )
+                self.assertEqual(
+                    [path.name for path in aliased_paths],
+                    ["libfabric.so", "libfabric.so.1"],
+                )
+                self.assertTrue((staged_dir / "libfabric.so.1").is_file())
+
     def test_resolve_install_root_accepts_provider_only_mlx5_layout(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cargo_target_root = Path(tmpdir)
@@ -113,11 +137,8 @@ class VendorRuntimeLayoutTest(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as tmpdir:
             vendor_root = Path(tmpdir) / "vendor_runtime"
-            (vendor_root / "bin").mkdir(parents=True)
             (vendor_root / "etc" / "libibverbs.d").mkdir(parents=True)
             (vendor_root / "lib").mkdir(parents=True)
-            (vendor_root / "bin" / "protoc").write_text("", encoding="utf-8")
-            os.chmod(vendor_root / "bin" / "protoc", 0o755)
             (vendor_root / "etc" / "libibverbs.d" / "mlx5.driver").write_text("", encoding="utf-8")
             for lib_name in (
                 "libfabric.so.1",
@@ -136,6 +157,31 @@ class VendorRuntimeLayoutTest(unittest.TestCase):
 
             mod.read_runtime_dependency_entries = fake_read_runtime_dependency_entries  # type: ignore[attr-defined]
             self.assertFalse(mod.vendor_runtime_install_root_ready(vendor_root))
+
+    def test_pub_prepare_vendor_runtime_readiness_does_not_require_protoc(self) -> None:
+        module_path = REPO_ROOT / "setup_and_pack" / "pub_prepare_build.py"
+        mod = _load_module(
+            module_path=module_path,
+            module_name="pub_prepare_vendor_runtime_no_protoc_test",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            vendor_root = Path(tmpdir) / "vendor_runtime"
+            (vendor_root / "etc" / "libibverbs.d").mkdir(parents=True)
+            (vendor_root / "lib").mkdir(parents=True)
+            (vendor_root / "etc" / "libibverbs.d" / "mlx5.driver").write_text("", encoding="utf-8")
+            for lib_name in (
+                "libfabric.so.1",
+                "libibverbs.so.1",
+                "libmlx5.so.1",
+                "libmlx5-rdmav34.so",
+                "libpsm_infinipath.so.1",
+                "libpsm2.so.2",
+                "libinfinipath.so.4",
+            ):
+                (vendor_root / "lib" / lib_name).write_text("", encoding="utf-8")
+
+            mod.read_runtime_dependency_entries = lambda _path, *, ld_library_paths: []  # type: ignore[attr-defined]
+            self.assertTrue(mod.vendor_runtime_install_root_ready(vendor_root))
 
 
 if __name__ == "__main__":
