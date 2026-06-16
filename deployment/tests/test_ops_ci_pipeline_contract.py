@@ -13,7 +13,7 @@ import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-MODULE_PATH = REPO_ROOT / "fluxon_py" / "runtime" / "ops_ci.py"
+MODULE_PATH = REPO_ROOT / "fluxon_test_stack" / "ops_ci.py"
 ALL_TEST_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "all_test.yml"
 
 
@@ -170,7 +170,7 @@ class TestOpsCiPipelineContract(unittest.TestCase):
         self.assertEqual(len(run_steps), 1)
         self.assertEqual(
             run_steps[0].get("run"),
-            "python3 fluxon_py/runtime/ops_ci.py workflow-contract-tests",
+            "python3 fluxon_test_stack/ops_ci.py workflow-contract-tests",
         )
 
 

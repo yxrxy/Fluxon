@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Sequence
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[1]
 PACK_RELEASE_PATH = REPO_ROOT / "setup_and_pack" / "pack_release.py"
 START_TEST_BED_PATH = REPO_ROOT / "fluxon_test_stack" / "start_test_bed.py"
 BUILD_DOC_SITE_PATH = REPO_ROOT / "scripts" / "build_doc_site.py"
@@ -127,7 +127,7 @@ def workflow_contract_tests(*, test_modules: Sequence[str]) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Fluxon Ops CI/workflow entrypoints.")
+    parser = argparse.ArgumentParser(description="Fluxon test-stack-owned CI/workflow entrypoints.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     build_release_parser = subparsers.add_parser(

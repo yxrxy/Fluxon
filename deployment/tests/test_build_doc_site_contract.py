@@ -81,7 +81,7 @@ class TestBuildDocSiteContract(unittest.TestCase):
         self.assertEqual(len(build_steps), 1)
         self.assertEqual(
             build_steps[0].get("run"),
-            "python3 fluxon_py/runtime/ops_ci.py build-doc-site --base-url-from-github-env",
+            "python3 fluxon_test_stack/ops_ci.py build-doc-site --base-url-from-github-env",
         )
 
 

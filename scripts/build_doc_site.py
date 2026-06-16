@@ -1638,6 +1638,7 @@ def compute_source_state() -> tuple[tuple[str, int, int], ...]:
     for path in (
         Path(__file__),
         REPO_ROOT / ".github" / "workflows" / "docs-pages.yml",
+        REPO_ROOT / "fluxon_test_stack" / "ops_ci.py",
         HOMEPAGE_MARKDOWN_SOURCE,
         HOMEPAGE_CN_MARKDOWN_SOURCE,
         *HOMEPAGE_SUPPORT_FILE_PATHS,
