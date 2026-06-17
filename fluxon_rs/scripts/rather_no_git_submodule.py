@@ -8,8 +8,7 @@ from pathlib import Path
 
 
 DEFAULT_WORKDIR: Path = Path(__file__).resolve().parents[2]
-DEFAULT_CONFIG_REL_PATH: str = "setup_and_pack/rather_no_git_submodule.local.yaml"
-DEFAULT_FALLBACK_CONFIG_REL_PATH: str = "setup_and_pack/rather_no_git_submodule.yaml"
+DEFAULT_CONFIG_REL_PATH: str = "setup_and_pack/rather_no_git_submodule.yaml"
 
 
 def _resolve_repo_root_cli_path(*, raw_path: str, field_name: str) -> Path:
@@ -34,11 +33,7 @@ def main() -> int:
         "--config",
         type=str,
         default=None,
-        help=(
-            "YAML config path (optional; defaults to "
-            f"{DEFAULT_CONFIG_REL_PATH} under workdir when present, otherwise "
-            f"{DEFAULT_FALLBACK_CONFIG_REL_PATH})"
-        ),
+        help=f"YAML config path (optional; defaults to {DEFAULT_CONFIG_REL_PATH} under workdir)",
     )
     parser.add_argument(
         "-w",
