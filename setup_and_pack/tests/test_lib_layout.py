@@ -11,6 +11,8 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LIB_LAYOUT_PATH = REPO_ROOT / "setup_and_pack" / "nix" / "lib_layout.py"
+MOKA_MANIFEST_PATH = REPO_ROOT / "fluxon_rs" / "moka" / "Cargo.toml"
+MOKA_SYNC_COMMAND = "python fluxon_rs/scripts/rather_no_git_submodule.py"
 
 
 def _load_lib_layout():
@@ -27,6 +29,10 @@ _LIB_LAYOUT = _load_lib_layout()
 
 class ApplyLayoutTest(unittest.TestCase):
     def test_bridge_prebuilt_materializes_workspace_seed(self) -> None:
+        if not MOKA_MANIFEST_PATH.is_file():
+            self.skipTest(
+                f"missing {MOKA_MANIFEST_PATH}; sync external source repos first with `{MOKA_SYNC_COMMAND}`"
+            )
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             project_root = REPO_ROOT

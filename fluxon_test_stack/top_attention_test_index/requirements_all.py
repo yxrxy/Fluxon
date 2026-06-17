@@ -35,7 +35,7 @@ TEST_REQUIREMENT_DESCRIPTIONS: dict[str, str] = {
     "kv-cluster": "A configured KV backend runtime from the repo test config must be reachable.",
     "ops": "A reachable Fluxon Ops control plane is required by the test-stack execution flow.",
     "python-wheel-build": "Python wheel build dependencies must be available.",
-    "submodules": "Required git submodules must be initialized for build-using tests.",
+    "submodules": "Required external source repos must be synced for build-using tests.",
     "test-stack-targets": "A TEST_STACK config with reachable target hosts is required.",
     "tikv": "A TiKV/PD runtime is required, either external or started by the test.",
 }
