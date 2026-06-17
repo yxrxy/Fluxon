@@ -48,8 +48,6 @@ DEFAULT_HOST_PATH_SUFFIXES = {
     ("manylinux", "cargo_registry_dir"): "manylinux-cache/cargo-registry",
     ("manylinux", "cargo_git_dir"): "manylinux-cache/cargo-git",
 }
-MOKA_AUTHORITY_RELATIVE_PATH = "fluxon_rs/moka"
-MOKA_SYNC_COMMAND = "python fluxon_rs/scripts/rather_no_git_submodule.py"
 BRIDGE_PREBUILT_WORKSPACE_SEED_EXTRA_RELATIVE_PATHS = (
     "setup_and_pack/nix",
     "setup_and_pack/lib_tool.py",
@@ -762,13 +760,6 @@ def _materialize_bridge_prebuilt_workspace_seed(*, source_root: Path, target_roo
     for relative_path in BRIDGE_PREBUILT_WORKSPACE_SEED_RELATIVE_PATHS:
         source_path = source_root / relative_path
         if not source_path.exists():
-            if relative_path == MOKA_AUTHORITY_RELATIVE_PATH:
-                raise RuntimeError(
-                    "bridge_prebuilt workspace seed source path is missing: "
-                    f"{source_path}\n"
-                    "Sync external source repos first with: "
-                    f"{MOKA_SYNC_COMMAND}"
-                )
             raise RuntimeError(
                 "bridge_prebuilt workspace seed source path is missing: "
                 f"{source_path}"
