@@ -33,6 +33,22 @@ def run_pytest(description: str, paths: Iterable[str]) -> int:
     return call([python, "-m", "pytest", *paths, *passthrough])
 
 
+def run_pytest_then_python_files(
+    description: str,
+    pytest_paths: Iterable[str],
+    python_paths: Iterable[str],
+) -> int:
+    python, passthrough = parse_python_passthrough(description)
+    rc = call([python, "-m", "pytest", *pytest_paths, *passthrough])
+    if rc != 0:
+        return rc
+    for path in python_paths:
+        rc = call([python, "-u", str(REPO_ROOT / path), *passthrough])
+        if rc != 0:
+            return rc
+    return 0
+
+
 def run_python_file(description: str, path: str, extra_args: Iterable[str] = ()) -> int:
     python, passthrough = parse_python_passthrough(description)
     return call([python, "-u", str(REPO_ROOT / path), *extra_args, *passthrough])

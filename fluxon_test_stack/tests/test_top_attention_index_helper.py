@@ -26,6 +26,10 @@ class TestTopAttentionIndexHelper(unittest.TestCase):
         self.assertTrue(match_top_attention_prefix(Path("_config_mq.py"), "_config"))
         self.assertFalse(match_top_attention_prefix(Path("_relay_mq.py"), "kv"))
 
+    def test_match_prefix_with_py_suffix_is_exact(self) -> None:
+        self.assertTrue(match_top_attention_prefix(Path("_mq_mpmc.py"), "_mq_mpmc.py"))
+        self.assertFalse(match_top_attention_prefix(Path("_mq_mpmc_bench.py"), "_mq_mpmc.py"))
+
     def test_select_entries_returns_known_subset(self) -> None:
         matched = select_top_attention_entries(["mq"])
         names = {path.name for path in matched}

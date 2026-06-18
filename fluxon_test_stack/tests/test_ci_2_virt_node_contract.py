@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import argparse
 import sys
 import tempfile
 import unittest
@@ -128,6 +129,39 @@ class TestCi2VirtNodeContract(unittest.TestCase):
             generated["scenes"]["ci_doc_page"]["select"]["scales"],
             ["n1_kvowner_dram_3gib"],
         )
+
+    def test_top_attention_ci_scene_uses_runner_venv(self) -> None:
+        suite_cfg = _ENTRY._load_yaml_mapping(_ENTRY.DEFAULT_SUITE_PATH, ctx="suite")
+        generated = _ENTRY._rewrite_suite_for_local_dual_nodes(
+            suite_cfg=suite_cfg,
+            scene_ids=["ci_doc_page"],
+            primary_node_name="local-node-a",
+            secondary_node_name="local-node-b",
+            host_ip="10.1.1.119",
+            wheel_name="fluxon-0.2.1-cp38-abi3-manylinux_2_28_x86_64.whl",
+            controller_port=19080,
+        )
+        entries = _ENTRY._selected_top_attention_entries(
+            argparse.Namespace(
+                top_attention_all=False,
+                top_attention_prefixes=["_mq_core.py", "_mq_mpmc.py"],
+            )
+        )
+        _ENTRY._append_top_attention_ci_scene(
+            generated,
+            entries=entries,
+            extra_args=[],
+        )
+
+        scene = generated["scenes"][_ENTRY.TOP_ATTENTION_CI_SCENE_ID]
+        self.assertEqual(scene["ci"]["runtime_contract"], "cluster_kv_owner")
+        self.assertEqual(scene["select"]["profiles"], [_ENTRY.PUBLIC_PROFILE_ID])
+        commands = scene["ci"]["commands"]
+        self.assertEqual([cmd["id"] for cmd in commands], ["mq_core", "mq_mpmc"])
+        for command in commands:
+            command_text = command["command"]
+            self.assertIn("'__RUN_DIR__/venv/bin/python3'", command_text)
+            self.assertIn("'--python' '__RUN_DIR__/venv/bin/python3'", command_text)
 
     def test_generated_deployconf_rewrites_to_dual_local_nodes(self) -> None:
         deployconf_cfg = _ENTRY._load_yaml_mapping(_ENTRY.DEFAULT_DEPLOYCONF_TEMPLATE, ctx="deployconf")

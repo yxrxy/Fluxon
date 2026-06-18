@@ -669,9 +669,11 @@ def main() -> None:
         action="store_true",
         help="Print only the requirement union for --action top_attention_list.",
     )
-    args = parser.parse_args()
+    args, passthrough = parser.parse_known_args()
 
     action = args.action or "run"
+    if passthrough and action not in ("top_attention_run", "top_attention_quick"):
+        parser.error("unrecognized arguments: " + " ".join(passthrough))
     if action == "top_attention_list":
         prefixes = list(args.top_attention_prefixes)
         if args.top_attention_all:
@@ -695,10 +697,10 @@ def main() -> None:
                 print("ERROR: --top-attention-prefix is required unless --top-attention-all is set")
                 raise SystemExit(2)
             paths = select_top_attention_entries(prefixes)
-        rc = run_top_attention_entries(paths)
+        rc = run_top_attention_entries(paths, passthrough=passthrough)
         raise SystemExit(rc)
     if action == "top_attention_quick":
-        rc = run_top_attention_entries(iter_quick_entry_paths())
+        rc = run_top_attention_entries(iter_quick_entry_paths(), passthrough=passthrough)
         raise SystemExit(rc)
 
     if args.workdir is None:

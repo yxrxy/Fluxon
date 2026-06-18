@@ -17,6 +17,18 @@ import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+FLUXON_TEST_STACK_DIR = REPO_ROOT / "fluxon_test_stack"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+if str(FLUXON_TEST_STACK_DIR) not in sys.path:
+    sys.path.insert(0, str(FLUXON_TEST_STACK_DIR))
+
+from fluxon_test_stack.top_attention_index_helper import (
+    display_top_attention_relpath,
+    iter_index_entry_paths,
+    select_top_attention_entries,
+)
+
 DEFAULT_SUITE_PATH = REPO_ROOT / "fluxon_test_stack" / "ci_test_list.yaml"
 DEFAULT_DEPLOYCONF_TEMPLATE = REPO_ROOT / "fluxon_test_stack" / "deployconf_testbed.yml"
 DEFAULT_START_TEST_BED_TEMPLATE = REPO_ROOT / "fluxon_test_stack" / "start_test_bed.yaml"
@@ -33,6 +45,7 @@ DEFAULT_DOC_SITE_BASE_URL = "example.com"
 PUBLIC_PROFILE_ID = "fluxon_tcp_thread"
 PUBLIC_ARTIFACT_SET_ID = "fluxon_tcp_thread"
 PUBLIC_TRANSPORT_FEATURE = "tcp_thread_transport"
+TOP_ATTENTION_CI_SCENE_ID = "ci_top_attention"
 DEFAULT_HOSTWORKDIR = Path("/mnt/nvme0/store_team_dev/fluxon_deploy")
 LOCAL_PRIMARY_NODE_SUFFIX = "a"
 LOCAL_SECONDARY_NODE_SUFFIX = "b"
@@ -120,6 +133,31 @@ def _parse_args() -> argparse.Namespace:
         "--skip-runner",
         action="store_true",
         help="Skip fluxon_test_stack/test_runner.py.",
+    )
+    parser.add_argument(
+        "--top-attention-prefix",
+        action="append",
+        dest="top_attention_prefixes",
+        default=[],
+        help=(
+            "Run matching top-attention index entries after the generated suite runner. "
+            "May be passed multiple times."
+        ),
+    )
+    parser.add_argument(
+        "--top-attention-all",
+        action="store_true",
+        help="Run every top-attention index entry after the generated suite runner.",
+    )
+    parser.add_argument(
+        "--top-attention-arg",
+        action="append",
+        dest="top_attention_args",
+        default=[],
+        help=(
+            "Extra argument forwarded to each selected top-attention entry. "
+            "Repeat for multiple tokens, for example --top-attention-arg=--maxfail=1."
+        ),
     )
     parser.add_argument(
         "--skip-doc-build",
@@ -302,6 +340,63 @@ def _selected_scene_ids(args: argparse.Namespace, suite_cfg: dict[str, Any]) -> 
     if args.scene_ids:
         return list(dict.fromkeys(args.scene_ids))
     return _default_scene_ids(suite_cfg)
+
+
+def _selected_top_attention_entries(args: argparse.Namespace) -> list[Path]:
+    if args.top_attention_all:
+        return list(iter_index_entry_paths())
+    if not args.top_attention_prefixes:
+        return []
+    return select_top_attention_entries(args.top_attention_prefixes)
+
+
+def _shell_quote_single(raw: str) -> str:
+    return "'" + raw.replace("'", "'\"'\"'") + "'"
+
+
+def _top_attention_ci_command(path: Path, extra_args: list[str]) -> str:
+    tokens = [
+        "__RUN_DIR__/venv/bin/python3",
+        "-u",
+        f"__RUN_DIR__/src/{display_top_attention_relpath(path)}",
+        "--python",
+        "__RUN_DIR__/venv/bin/python3",
+        *extra_args,
+    ]
+    return " ".join(_shell_quote_single(token) for token in tokens)
+
+
+def _append_top_attention_ci_scene(
+    suite: dict[str, Any],
+    *,
+    entries: list[Path],
+    extra_args: list[str],
+) -> None:
+    if not entries:
+        return
+    scenes = suite.get("scenes")
+    if not isinstance(scenes, dict):
+        raise ValueError("suite.scenes must be a mapping")
+    commands = []
+    for path in entries:
+        commands.append(
+            {
+                "id": path.stem.lstrip("_"),
+                "command": _top_attention_ci_command(path, extra_args),
+                "timeout_seconds": 10800,
+            }
+        )
+    scenes[TOP_ATTENTION_CI_SCENE_ID] = {
+        "ci": {
+            "subject": "top_attention",
+            "runtime_contract": "cluster_kv_owner",
+            "commands": commands,
+        },
+        "select": {
+            "scales": ["n1_kvowner_dram_3gib"],
+            "profiles": [PUBLIC_PROFILE_ID],
+        },
+    }
 
 
 def _rewrite_suite_for_local_dual_nodes(
@@ -721,6 +816,7 @@ def _build_generated_configs(
     wheel_name: str,
 ) -> dict[str, Any]:
     scene_ids = _selected_scene_ids(args, suite_cfg)
+    top_attention_entries = _selected_top_attention_entries(args)
     generated_suite = _rewrite_suite_for_local_dual_nodes(
         suite_cfg=suite_cfg,
         scene_ids=scene_ids,
@@ -729,6 +825,11 @@ def _build_generated_configs(
         host_ip=host_ip,
         wheel_name=wheel_name,
         controller_port=int(args.controller_port),
+    )
+    _append_top_attention_ci_scene(
+        generated_suite,
+        entries=top_attention_entries,
+        extra_args=list(args.top_attention_args),
     )
     generated_deployconf = _rewrite_deployconf_for_local_dual_nodes(
         deployconf_cfg=deployconf_template,
@@ -781,6 +882,7 @@ def _build_generated_configs(
         "primary_hostworkdir": str(primary_hostworkdir),
         "secondary_hostworkdir": str(secondary_hostworkdir),
         "scene_ids": scene_ids,
+        "top_attention_entries": [display_top_attention_relpath(path) for path in top_attention_entries],
     }
 
 
@@ -961,6 +1063,7 @@ def main() -> int:
     if not args.skip_runner:
         runner_workdir = Path(metadata["runner_workdir"])
         runner_workdir.mkdir(parents=True, exist_ok=True)
+        runner_env = _runner_env(release_dir=release_dir, start_cfg_path=Path(metadata["start_test_bed_path"]))
         runner_cmd = [
             sys.executable,
             str((REPO_ROOT / "fluxon_test_stack" / "test_runner.py").resolve()),
@@ -969,7 +1072,7 @@ def main() -> int:
             "-w",
             str(runner_workdir),
         ]
-        _run(runner_cmd, env=_runner_env(release_dir=release_dir, start_cfg_path=Path(metadata["start_test_bed_path"])))
+        _run(runner_cmd, env=runner_env)
 
     if not args.skip_doc_build:
         _run(

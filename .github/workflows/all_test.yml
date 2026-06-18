@@ -78,6 +78,10 @@ jobs:
             --print-generated \
             --hostworkdir "$RUNNER_TEMP/fluxon_deploy" \
             --scene-id ci_doc_page \
+            --top-attention-prefix _mq_core.py \
+            --top-attention-prefix _mq_mpmc.py \
+            --top-attention-prefix _mq_mpmc_bench.py \
+            --top-attention-prefix _mq_mpsc.py \
             --skip-doc-build
 
       - name: Normalize ci_2_virt_node debug artifact permissions

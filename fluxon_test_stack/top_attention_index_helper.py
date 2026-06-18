@@ -46,7 +46,10 @@ def match_top_attention_prefix(path: Path, raw_prefix: str) -> bool:
     if not prefix:
         return False
     if prefix.endswith(".py"):
-        prefix = prefix[:-3]
+        exact_names = {prefix}
+        if not prefix.startswith("_"):
+            exact_names.add("_" + prefix)
+        return path.name in exact_names
     prefix_token = prefix.lstrip("_")
     candidates = {prefix}
     if prefix and not prefix.startswith("_"):
@@ -112,9 +115,14 @@ def iter_quick_entry_paths() -> list[Path]:
     return selected
 
 
-def run_top_attention_entries(paths: Sequence[Path], *, python_executable: str = sys.executable) -> int:
+def run_top_attention_entries(
+    paths: Sequence[Path],
+    *,
+    python_executable: str = sys.executable,
+    passthrough: Sequence[str] = (),
+) -> int:
     for path in paths:
-        cmd = [python_executable, str(path)]
+        cmd = [python_executable, str(path), *passthrough]
         print("+ " + " ".join(cmd), flush=True)
         rc = subprocess.call(cmd, cwd=str(REPO_ROOT))
         if rc != 0:
