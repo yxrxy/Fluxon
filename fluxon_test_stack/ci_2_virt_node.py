@@ -388,7 +388,7 @@ def _append_top_attention_ci_scene(
         )
     scenes[TOP_ATTENTION_CI_SCENE_ID] = {
         "ci": {
-            "subject": "top_attention",
+            "subject": "mq",
             "runtime_contract": "cluster_kv_owner",
             "commands": commands,
         },

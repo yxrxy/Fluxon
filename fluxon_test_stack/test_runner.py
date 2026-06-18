@@ -342,6 +342,7 @@ SCENE_ENUMS_ALLOWED = {
     "ci_fs",
     "ci_rust",
     "ci_doc_page",
+    "ci_top_attention",
     "ci_fs_s3",
 }
 

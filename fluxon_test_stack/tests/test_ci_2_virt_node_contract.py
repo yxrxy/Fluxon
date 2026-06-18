@@ -154,6 +154,7 @@ class TestCi2VirtNodeContract(unittest.TestCase):
         )
 
         scene = generated["scenes"][_ENTRY.TOP_ATTENTION_CI_SCENE_ID]
+        self.assertEqual(scene["ci"]["subject"], "mq")
         self.assertEqual(scene["ci"]["runtime_contract"], "cluster_kv_owner")
         self.assertEqual(scene["select"]["profiles"], [_ENTRY.PUBLIC_PROFILE_ID])
         commands = scene["ci"]["commands"]
