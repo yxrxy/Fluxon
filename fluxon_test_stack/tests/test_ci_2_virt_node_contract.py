@@ -27,11 +27,14 @@ _ENTRY = _load_module()
 
 
 class TestCi2VirtNodeContract(unittest.TestCase):
+    _KVTEST_SCENE_ID = "ci_top_attention_bin_kvtest"
+    _DOC_SCENE_ID = "ci_top_attention_doc_page_build"
+
     def test_generated_suite_is_public_dual_local_nodes_ci_only(self) -> None:
         suite_cfg = _ENTRY._load_yaml_mapping(_ENTRY.DEFAULT_SUITE_PATH, ctx="suite")
         generated = _ENTRY._rewrite_suite_for_local_dual_nodes(
             suite_cfg=suite_cfg,
-            scene_ids=["ci_kv", "ci_rust"],
+            scene_ids=[self._DOC_SCENE_ID, self._KVTEST_SCENE_ID],
             primary_node_name="local-node-a",
             secondary_node_name="local-node-b",
             host_ip="10.1.1.119",
@@ -40,10 +43,12 @@ class TestCi2VirtNodeContract(unittest.TestCase):
         )
 
         self.assertEqual(generated["run"]["selectors"]["profile_ids"], ["fluxon_tcp_thread"])
-        self.assertEqual(set(generated["scenes"].keys()), {"ci_kv", "ci_rust"})
+        self.assertEqual(set(generated["scenes"].keys()), {self._DOC_SCENE_ID, self._KVTEST_SCENE_ID})
         self.assertEqual(generated["profiles"]["fluxon_tcp_thread"]["artifact_set"], "fluxon_tcp_thread")
         self.assertEqual(
-            generated["profiles"]["fluxon_tcp_thread"]["runtime"]["ci"]["command_tokens"]["KV_TRANSPORT_FEATURE"],
+            generated["profiles"]["fluxon_tcp_thread"]["runtime"]["ci"]["scene_configs"][self._KVTEST_SCENE_ID][
+                "kv_transport_feature"
+            ],
             "tcp_thread_transport",
         )
         self.assertEqual(
@@ -76,31 +81,44 @@ class TestCi2VirtNodeContract(unittest.TestCase):
             "test_rsc/fluxon_tcp_thread",
         )
         self.assertEqual(
-            generated["scales"]["n2_kvowner_dram_3gib"]["targets"]["hosts"],
-            ["local-node-a", "local-node-b"],
+            generated["scales"]["n1_kvowner_dram_3gib"]["targets"]["hosts"],
+            ["local-node-a"],
         )
         self.assertEqual(
-            generated["scales"]["n2_kvowner_dram_3gib"]["targets"]["primary"],
+            generated["scales"]["n1_kvowner_dram_3gib"]["targets"]["primary"],
             "local-node-a",
         )
+        self.assertNotIn("secondary", generated["scales"]["n1_kvowner_dram_3gib"]["targets"])
         self.assertEqual(
-            generated["scales"]["n2_kvowner_dram_3gib"]["targets"]["secondary"],
-            "local-node-b",
+            generated["scales"]["n1_kvowner_dram_20gib"]["targets"]["hosts"],
+            ["local-node-a"],
         )
         self.assertEqual(
-            generated["scenes"]["ci_kv"]["select"]["scales"],
+            generated["scales"]["n1_kvowner_dram_20gib"]["targets"]["primary"],
+            "local-node-a",
+        )
+        self.assertNotIn("secondary", generated["scales"]["n1_kvowner_dram_20gib"]["targets"])
+        self.assertEqual(
+            generated["scenes"][self._DOC_SCENE_ID]["select"]["scales"],
             ["n1_kvowner_dram_3gib"],
         )
         self.assertEqual(
-            generated["scenes"]["ci_rust"]["select"]["scales"],
+            generated["scenes"][self._KVTEST_SCENE_ID]["select"]["scales"],
             ["n1_kvowner_dram_20gib"],
         )
+        self.assertEqual(
+            set(generated["scales"].keys()),
+            {"n1_kvowner_dram_3gib", "n1_kvowner_dram_20gib"},
+        )
+        self.assertNotIn("commands", generated["scenes"][self._KVTEST_SCENE_ID]["ci"])
 
-    def test_generated_suite_supports_doc_page_ci_scene(self) -> None:
+    def test_generated_suite_preserves_source_scene_configs(self) -> None:
         suite_cfg = _ENTRY._load_yaml_mapping(_ENTRY.DEFAULT_SUITE_PATH, ctx="suite")
+        suite_cfg["profiles"]["fluxon_tcp"]["runtime"]["ci"]["scene_configs"][self._KVTEST_SCENE_ID]["kv_test_rounds"] = "p2p_only"
+
         generated = _ENTRY._rewrite_suite_for_local_dual_nodes(
             suite_cfg=suite_cfg,
-            scene_ids=["ci_doc_page"],
+            scene_ids=[self._KVTEST_SCENE_ID],
             primary_node_name="local-node-a",
             secondary_node_name="local-node-b",
             host_ip="10.1.1.119",
@@ -108,26 +126,43 @@ class TestCi2VirtNodeContract(unittest.TestCase):
             controller_port=19080,
         )
 
-        self.assertEqual(set(generated["scenes"].keys()), {"ci_doc_page"})
         self.assertEqual(
-            generated["scenes"]["ci_doc_page"]["ci"]["runtime_contract"],
+            generated["profiles"]["fluxon_tcp_thread"]["runtime"]["ci"]["scene_configs"][self._KVTEST_SCENE_ID][
+                "kv_test_rounds"
+            ],
+            "p2p_only",
+        )
+
+    def test_generated_suite_supports_doc_page_ci_scene(self) -> None:
+        suite_cfg = _ENTRY._load_yaml_mapping(_ENTRY.DEFAULT_SUITE_PATH, ctx="suite")
+        generated = _ENTRY._rewrite_suite_for_local_dual_nodes(
+            suite_cfg=suite_cfg,
+            scene_ids=[self._DOC_SCENE_ID],
+            primary_node_name="local-node-a",
+            secondary_node_name="local-node-b",
+            host_ip="10.1.1.119",
+            wheel_name="fluxon-0.2.1-cp38-abi3-manylinux_2_28_x86_64.whl",
+            controller_port=19080,
+        )
+
+        self.assertEqual(set(generated["scenes"].keys()), {self._DOC_SCENE_ID})
+        self.assertEqual(
+            generated["scenes"][self._DOC_SCENE_ID]["ci"]["runtime_contract"],
             "rust_self_managed",
         )
-        prepare = generated["scenes"]["ci_doc_page"]["ci"]["prepare"]
+        prepare = generated["scenes"][self._DOC_SCENE_ID]["ci"]["prepare"]
         self.assertEqual(len(prepare), 1)
         self.assertEqual(prepare[0]["kind"], "setup_dev_env")
         self.assertEqual(
             prepare[0]["config"],
             "setup_and_pack/setup_dev_env/doc_page_ci.yaml",
         )
-        commands = generated["scenes"]["ci_doc_page"]["ci"]["commands"]
-        self.assertEqual(len(commands), 1)
-        self.assertEqual(commands[0]["id"], "doc_page_build")
-        self.assertIn("_doc_page_build.py", commands[0]["command"])
+        self.assertNotIn("commands", generated["scenes"][self._DOC_SCENE_ID]["ci"])
         self.assertEqual(
-            generated["scenes"]["ci_doc_page"]["select"]["scales"],
+            generated["scenes"][self._DOC_SCENE_ID]["select"]["scales"],
             ["n1_kvowner_dram_3gib"],
         )
+        self.assertEqual(set(generated["scales"].keys()), {"n1_kvowner_dram_3gib"})
 
     def test_generated_deployconf_rewrites_to_dual_local_nodes(self) -> None:
         deployconf_cfg = _ENTRY._load_yaml_mapping(_ENTRY.DEFAULT_DEPLOYCONF_TEMPLATE, ctx="deployconf")
@@ -297,15 +332,6 @@ class TestCi2VirtNodeContract(unittest.TestCase):
         self.assertEqual(calls[0][0], sys.executable)
         self.assertEqual(calls[0][1], str(_ENTRY.DEFAULT_RATHER_NO_GIT_SUBMODULE_SCRIPT.resolve()))
 
-    def test_doc_build_env_sets_base_url(self) -> None:
-        env = _ENTRY._doc_build_env(base_url="tele-ai.github.io/Fluxon")
-        self.assertEqual(env["FLUXON_DOC_SITE_BASE_URL"], "tele-ai.github.io/Fluxon")
-
-    def test_doc_build_env_reuses_inherited_base_url(self) -> None:
-        with mock.patch.dict("os.environ", {"FLUXON_DOC_SITE_BASE_URL": "tele-ai.github.io/Fluxon"}, clear=True):
-            env = _ENTRY._doc_build_env(base_url=None)
-        self.assertEqual(env["FLUXON_DOC_SITE_BASE_URL"], "tele-ai.github.io/Fluxon")
-
     def test_same_host_local_testbed_host_ip_requires_non_loopback(self) -> None:
         with mock.patch.object(_ENTRY, "_detect_local_ipv4", return_value="10.1.1.119"):
             self.assertEqual(_ENTRY._same_host_local_testbed_host_ip(), "10.1.1.119")
@@ -331,15 +357,14 @@ class TestCi2VirtNodeContract(unittest.TestCase):
                 "ci_2_virt_node.py",
                 "--workdir",
                 str(workdir),
-                "--hostworkdir",
+                "--testbed-hostworkdir",
                 str(hostworkdir),
                 "--scene-id",
-                "ci_kv",
+                self._KVTEST_SCENE_ID,
                 "--skip-builder-image",
                 "--skip-pack",
                 "--skip-dispatch",
                 "--skip-start-testbed",
-                "--skip-doc-build",
             ]
             original_argv = sys.argv[:]
             try:
@@ -366,6 +391,74 @@ class TestCi2VirtNodeContract(unittest.TestCase):
                 str((REPO_ROOT / "fluxon_release").resolve()),
             )
 
+    def test_main_supports_explicit_suite_path(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            workdir = root / "ci_2_virt_node_workdir"
+            hostworkdir = root / "hostworkdir"
+            suite_path = root / "ci_test_list.local.yaml"
+            suite_cfg = _ENTRY._load_yaml_mapping(_ENTRY.DEFAULT_SUITE_PATH, ctx="suite")
+            suite_cfg["scenes"] = {
+                key: value
+                for key, value in suite_cfg["scenes"].items()
+                if key in (self._DOC_SCENE_ID, self._KVTEST_SCENE_ID)
+            }
+            suite_cfg["profiles"] = {"fluxon_tcp": suite_cfg["profiles"]["fluxon_tcp"]}
+            suite_cfg["run"]["selectors"]["profile_ids"] = ["fluxon_tcp"]
+            suite_cfg["profiles"]["fluxon_tcp"]["runtime"]["ci"]["scene_configs"][self._KVTEST_SCENE_ID]["kv_test_rounds"] = "p2p_only"
+            suite_cfg["profiles"]["fluxon_tcp"]["runtime"]["ci"]["scene_configs"][self._DOC_SCENE_ID]["doc_site_base_url"] = (
+                "tele-ai.github.io/Fluxon"
+            )
+            _ENTRY._write_yaml(suite_path, suite_cfg)
+            release_dir = REPO_ROOT / "fluxon_release"
+            release_dir.mkdir(parents=True, exist_ok=True)
+            wheel_path = release_dir / "fluxon-0.2.1-cp38-abi3-manylinux_2_28_x86_64.whl"
+            wheel_path.write_text("", encoding="utf-8")
+
+            argv = [
+                "ci_2_virt_node.py",
+                "--suite-path",
+                str(suite_path),
+                "--workdir",
+                str(workdir),
+                "--testbed-hostworkdir",
+                str(hostworkdir),
+                "--skip-builder-image",
+                "--skip-pack",
+                "--skip-dispatch",
+                "--skip-start-testbed",
+                "--skip-runner",
+                "--print-generated",
+            ]
+            original_argv = sys.argv[:]
+            try:
+                with mock.patch.object(_ENTRY, "_detect_local_hostname", return_value="runner-host"):
+                    with mock.patch.object(_ENTRY, "_detect_local_ipv4", return_value="10.1.1.119"):
+                        sys.argv = argv
+                        rc = _ENTRY.main()
+            finally:
+                sys.argv = original_argv
+                wheel_path.unlink(missing_ok=True)
+
+            self.assertEqual(rc, 0)
+            generated_suite = _ENTRY._load_yaml_mapping(
+                workdir / "generated" / "ci_test_list.local.yaml",
+                ctx="generated suite",
+            )
+            self.assertEqual(set(generated_suite["scenes"].keys()), {self._DOC_SCENE_ID, self._KVTEST_SCENE_ID})
+            self.assertEqual(
+                generated_suite["profiles"]["fluxon_tcp_thread"]["runtime"]["ci"]["scene_configs"][self._KVTEST_SCENE_ID][
+                    "kv_test_rounds"
+                ],
+                "p2p_only",
+            )
+            self.assertEqual(
+                generated_suite["profiles"]["fluxon_tcp_thread"]["runtime"]["ci"]["scene_configs"][self._DOC_SCENE_ID][
+                    "doc_site_base_url"
+                ],
+                "tele-ai.github.io/Fluxon",
+            )
+
     def test_main_same_host_generated_configs_use_non_loopback_host_ip(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -380,16 +473,15 @@ class TestCi2VirtNodeContract(unittest.TestCase):
                 "ci_2_virt_node.py",
                 "--workdir",
                 str(workdir),
-                "--hostworkdir",
+                "--testbed-hostworkdir",
                 str(hostworkdir),
                 "--scene-id",
-                "ci_doc_page",
+                self._DOC_SCENE_ID,
                 "--skip-builder-image",
                 "--skip-pack",
                 "--skip-dispatch",
                 "--skip-start-testbed",
                 "--skip-runner",
-                "--skip-doc-build",
             ]
             original_argv = sys.argv[:]
             try:
@@ -438,15 +530,14 @@ class TestCi2VirtNodeContract(unittest.TestCase):
                 "ci_2_virt_node.py",
                 "--workdir",
                 str(workdir),
-                "--hostworkdir",
+                "--testbed-hostworkdir",
                 str(hostworkdir),
                 "--scene-id",
-                "ci_kv",
+                self._KVTEST_SCENE_ID,
                 "--skip-builder-image",
                 "--skip-dispatch",
                 "--skip-start-testbed",
                 "--skip-runner",
-                "--skip-doc-build",
             ]
             original_argv = sys.argv[:]
             try:
@@ -490,15 +581,14 @@ class TestCi2VirtNodeContract(unittest.TestCase):
                 "ci_2_virt_node.py",
                 "--workdir",
                 str(workdir),
-                "--hostworkdir",
+                "--testbed-hostworkdir",
                 str(hostworkdir),
                 "--scene-id",
-                "ci_kv",
+                self._KVTEST_SCENE_ID,
                 "--skip-builder-image",
                 "--skip-pack",
                 "--skip-dispatch",
                 "--skip-runner",
-                "--skip-doc-build",
             ]
             original_argv = sys.argv[:]
             try:

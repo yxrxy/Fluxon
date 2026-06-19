@@ -28,12 +28,13 @@ DEFAULT_RATHER_NO_GIT_SUBMODULE_SCRIPT = (
 )
 DEFAULT_CI_2_VIRT_NODE_WORKDIR = REPO_ROOT / ".dever" / "ci_2_virt_node"
 DEFAULT_RELEASE_DIR = REPO_ROOT / "fluxon_release"
-DOC_SITE_BASE_URL_ENV = "FLUXON_DOC_SITE_BASE_URL"
-DEFAULT_DOC_SITE_BASE_URL = "example.com"
 PUBLIC_PROFILE_ID = "fluxon_tcp_thread"
 PUBLIC_ARTIFACT_SET_ID = "fluxon_tcp_thread"
 PUBLIC_TRANSPORT_FEATURE = "tcp_thread_transport"
-DEFAULT_HOSTWORKDIR = Path("/mnt/nvme0/store_team_dev/fluxon_deploy")
+DEFAULT_TESTBED_BOOTSTRAP_MODE = "bare_then_apply"
+DEFAULT_TESTBED_UI_PORT = 18080
+DEFAULT_TESTBED_CONTROLLER_PORT = 19080
+DEFAULT_TESTBED_HOSTWORKDIR = Path("/mnt/nvme0/store_team_dev/fluxon_deploy")
 LOCAL_PRIMARY_NODE_SUFFIX = "a"
 LOCAL_SECONDARY_NODE_SUFFIX = "b"
 TEST_STACK_START_TEST_BED_CONFIG_ENV = "FLUXON_TEST_STACK_START_TEST_BED_CONFIG"
@@ -50,16 +51,23 @@ def _parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument(
+        "--suite-path",
+        type=Path,
+        default=DEFAULT_SUITE_PATH,
+        help="Suite YAML consumed by test_runner and rewritten for same-host local dual-node CI.",
+    )
+    parser.add_argument(
         "--workdir",
         type=Path,
         default=DEFAULT_CI_2_VIRT_NODE_WORKDIR,
         help="State root for generated configs and local CI runs.",
     )
     parser.add_argument(
-        "--hostworkdir",
+        "--testbed-hostworkdir",
         type=Path,
-        default=DEFAULT_HOSTWORKDIR,
-        help="Local hostworkdir used by the self-host testbed.",
+        dest="testbed_hostworkdir",
+        default=DEFAULT_TESTBED_HOSTWORKDIR,
+        help="Host-side runtime root used by the self-host testbed.",
     )
     parser.add_argument(
         "--release-dir",
@@ -80,7 +88,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--bootstrap-mode",
         choices=("bare_then_apply", "apply_only", "bare_only"),
-        default="bare_then_apply",
+        default=DEFAULT_TESTBED_BOOTSTRAP_MODE,
         help=(
             "End-state testbed bootstrap mode. The full CI flow still runs a bare bootstrap first, "
             "then an explicit apply validation pass."
@@ -122,11 +130,6 @@ def _parse_args() -> argparse.Namespace:
         help="Skip fluxon_test_stack/test_runner.py.",
     )
     parser.add_argument(
-        "--skip-doc-build",
-        action="store_true",
-        help="Skip scripts/build_doc_site.py build.",
-    )
-    parser.add_argument(
         "--runner-workdir",
         type=Path,
         default=None,
@@ -135,22 +138,14 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--ui-port",
         type=int,
-        default=18080,
+        default=DEFAULT_TESTBED_UI_PORT,
         help="test_runner_ui port for the generated start_test_bed config.",
     )
     parser.add_argument(
         "--controller-port",
         type=int,
-        default=19080,
+        default=DEFAULT_TESTBED_CONTROLLER_PORT,
         help="Fluxon Ops controller HTTP port for the generated testbed configs.",
-    )
-    parser.add_argument(
-        "--doc-site-base-url",
-        default=None,
-        help=(
-            "Optional explicit base URL forwarded to scripts/build_doc_site.py. If omitted, "
-            f"reuse {DOC_SITE_BASE_URL_ENV} when present, otherwise fall back to {DEFAULT_DOC_SITE_BASE_URL!r}."
-        ),
     )
     parser.add_argument(
         "--print-generated",
@@ -319,6 +314,7 @@ def _rewrite_suite_for_local_dual_nodes(
     if not isinstance(scenes, dict):
         raise ValueError("suite.scenes must be a mapping")
     selected_scenes: dict[str, Any] = {}
+    selected_scale_ids: list[str] = []
     for scene_id in scene_ids:
         scene_obj = scenes.get(scene_id)
         if not isinstance(scene_obj, dict):
@@ -330,6 +326,13 @@ def _rewrite_suite_for_local_dual_nodes(
         if not isinstance(select_cfg, dict):
             raise ValueError(f"scene[{scene_id}].select must be a mapping")
         select_cfg["profiles"] = [PUBLIC_PROFILE_ID]
+        raw_scale_ids = select_cfg.get("scales")
+        if not isinstance(raw_scale_ids, list) or not raw_scale_ids:
+            raise ValueError(f"scene[{scene_id}].select.scales must be a non-empty list")
+        for raw_scale_id in raw_scale_ids:
+            scale_id = _require_nonempty_str(str(raw_scale_id), f"scene[{scene_id}].select.scales[]")
+            if scale_id not in selected_scale_ids:
+                selected_scale_ids.append(scale_id)
         selected_scenes[scene_id] = selected
     suite["scenes"] = selected_scenes
 
@@ -344,7 +347,14 @@ def _rewrite_suite_for_local_dual_nodes(
     scales = suite.get("scales")
     if not isinstance(scales, dict):
         raise ValueError("suite.scales must be a mapping")
-    for scale_id, scale_obj in scales.items():
+    selected_scales: dict[str, Any] = {}
+    for scale_id in selected_scale_ids:
+        scale_obj = scales.get(scale_id)
+        if not isinstance(scale_obj, dict):
+            raise ValueError(f"selected scale is missing or not a mapping: {scale_id}")
+        selected_scales[scale_id] = scale_obj
+    suite["scales"] = selected_scales
+    for scale_id, scale_obj in selected_scales.items():
         if not isinstance(scale_obj, dict):
             continue
         topology = scale_obj.get("topology")
@@ -401,10 +411,18 @@ def _rewrite_suite_for_local_dual_nodes(
     ci_runtime = runtime.get("ci")
     if not isinstance(ci_runtime, dict):
         raise ValueError("generated public profile must define runtime.ci")
-    command_tokens = ci_runtime.get("command_tokens")
-    if not isinstance(command_tokens, dict):
-        raise ValueError("generated public profile runtime.ci.command_tokens must be a mapping")
-    command_tokens["KV_TRANSPORT_FEATURE"] = PUBLIC_TRANSPORT_FEATURE
+    scene_configs = ci_runtime.get("scene_configs")
+    if scene_configs is not None:
+        if not isinstance(scene_configs, dict):
+            raise ValueError("generated public profile runtime.ci.scene_configs must be a mapping")
+        kv_scene_config = scene_configs.get("ci_top_attention_bin_kvtest")
+        if kv_scene_config is not None:
+            if not isinstance(kv_scene_config, dict):
+                raise ValueError(
+                    "generated public profile runtime.ci.scene_configs['ci_top_attention_bin_kvtest'] must be a mapping"
+                )
+            # The generated public profile is fixed to the tcp-thread transport branch.
+            kv_scene_config["kv_transport_feature"] = PUBLIC_TRANSPORT_FEATURE
     for runtime_key in ("ci", "test_stack"):
         runtime_block = runtime.get(runtime_key)
         if not isinstance(runtime_block, dict):
@@ -799,27 +817,18 @@ def _runner_env(*, release_dir: Path, start_cfg_path: Path) -> dict[str, str]:
     return env
 
 
-def _doc_build_env(*, base_url: str | None) -> dict[str, str]:
-    env = os.environ.copy()
-    resolved_base_url = base_url
-    if resolved_base_url is None:
-        inherited = env.get(DOC_SITE_BASE_URL_ENV)
-        if inherited is not None and inherited.strip():
-            resolved_base_url = inherited.strip()
-        else:
-            resolved_base_url = DEFAULT_DOC_SITE_BASE_URL
-    env[DOC_SITE_BASE_URL_ENV] = _require_nonempty_str(resolved_base_url, "doc_site_base_url")
-    return env
-
-
 def main() -> int:
     args = _parse_args()
     workdir = _resolve_repo_root_cli_path(args.workdir)
-    hostworkdir = args.hostworkdir.resolve() if args.hostworkdir.is_absolute() else args.hostworkdir.resolve()
+    hostworkdir = (
+        args.testbed_hostworkdir.resolve()
+        if args.testbed_hostworkdir.is_absolute()
+        else args.testbed_hostworkdir.resolve()
+    )
     generated_dir = (workdir / "generated").resolve()
     generated_dir.mkdir(parents=True, exist_ok=True)
 
-    suite_cfg = _load_yaml_mapping(DEFAULT_SUITE_PATH, ctx="ci suite template")
+    suite_cfg = _load_yaml_mapping(_resolve_repo_root_cli_path(args.suite_path), ctx="ci suite template")
     deployconf_template = _load_yaml_mapping(DEFAULT_DEPLOYCONF_TEMPLATE, ctx="deployconf template")
     start_test_bed_template = _load_yaml_mapping(DEFAULT_START_TEST_BED_TEMPLATE, ctx="start_test_bed template")
 
@@ -970,12 +979,6 @@ def main() -> int:
             str(runner_workdir),
         ]
         _run(runner_cmd, env=_runner_env(release_dir=release_dir, start_cfg_path=Path(metadata["start_test_bed_path"])))
-
-    if not args.skip_doc_build:
-        _run(
-            [sys.executable, str((REPO_ROOT / "scripts" / "build_doc_site.py").resolve()), "build"],
-            env=_doc_build_env(base_url=args.doc_site_base_url),
-        )
 
     return 0
 
