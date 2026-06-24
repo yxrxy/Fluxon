@@ -29,6 +29,14 @@ scenes:
       scales: [n1_kvowner_dram_20gib]
       profiles: [fluxon_tcp]
 
+  ci_top_attention_mq_core:
+    ci:
+      subject: mq
+      runtime_contract: cluster_kv_owner
+    select:
+      scales: [n1_kvowner_dram_20gib]
+      profiles: [fluxon_tcp]
+
   kv_read_heavy_zipf:
     test_stack:
       mode: KVSTORE
@@ -221,8 +229,7 @@ artifact_sets:
       region: us-east-1
       key_prefix: profiles/fluxon_fastws
     release_artifacts:
-      python_wheel: fluxon-0.2.1-py3-none-any.whl
-      pyo3_wheel: fluxon_pyo3-0.2.1-cp38-abi3-manylinux_2_28_x86_64.whl
+      wheel: fluxon-0.2.1-py3-none-any.whl
     test_rsc_source: &test_rsc_source_fastws
       kind: FLUXON_OPS_FS_S3
       bucket: fluxon-release
@@ -242,8 +249,7 @@ artifact_sets:
       region: us-east-1
       key_prefix: profiles/fluxon_tquic
     release_artifacts:
-      python_wheel: fluxon-0.2.1-py3-none-any.whl
-      pyo3_wheel: fluxon_pyo3-0.2.1-cp38-abi3-manylinux_2_28_x86_64.whl
+      wheel: fluxon-0.2.1-py3-none-any.whl
     test_rsc_source: &test_rsc_source_tquic
       kind: FLUXON_OPS_FS_S3
       bucket: fluxon-release
@@ -263,8 +269,7 @@ artifact_sets:
       region: us-east-1
       key_prefix: profiles/fluxon_sockudo_ws
     release_artifacts:
-      python_wheel: fluxon-0.2.1-py3-none-any.whl
-      pyo3_wheel: fluxon_pyo3-0.2.1-cp38-abi3-manylinux_2_28_x86_64.whl
+      wheel: fluxon-0.2.1-py3-none-any.whl
     test_rsc_source: &test_rsc_source_sockudo_ws
       kind: FLUXON_OPS_FS_S3
       bucket: fluxon-release
@@ -284,8 +289,7 @@ artifact_sets:
       region: us-east-1
       key_prefix: profiles/fluxon_tcp
     release_artifacts:
-      python_wheel: fluxon-0.2.1-py3-none-any.whl
-      pyo3_wheel: fluxon_pyo3-0.2.1-cp38-abi3-manylinux_2_28_x86_64.whl
+      wheel: fluxon-0.2.1-py3-none-any.whl
     test_rsc_source: &test_rsc_source_tcp
       kind: FLUXON_OPS_FS_S3
       bucket: fluxon-release
@@ -315,6 +319,7 @@ profiles:
             doc_site_base_url: example.com
           ci_top_attention_bin_kvtest:
             kv_test_rounds: all
+          ci_top_attention_mq_core: {}
         runtime_contracts:
           cluster_kv_owner: &cluster_kv_owner_runtime
             base_runtime:
@@ -460,6 +465,7 @@ profiles:
             doc_site_base_url: example.com
           ci_top_attention_bin_kvtest:
             kv_test_rounds: all
+          ci_top_attention_mq_core: {}
       test_stack:
         <<: *common_test_stack_runtime
   fluxon_sockudo_ws:
@@ -472,6 +478,7 @@ profiles:
             doc_site_base_url: example.com
           ci_top_attention_bin_kvtest:
             kv_test_rounds: all
+          ci_top_attention_mq_core: {}
       test_stack:
         <<: *common_test_stack_runtime
   fluxon_tcp:
@@ -484,6 +491,7 @@ profiles:
             doc_site_base_url: example.com
           ci_top_attention_bin_kvtest:
             kv_test_rounds: all
+          ci_top_attention_mq_core: {}
       test_stack:
         <<: *common_test_stack_runtime
   redis_sharded:
