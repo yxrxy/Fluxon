@@ -29,6 +29,14 @@ scenes:
       scales: [n1_kvowner_dram_20gib]
       profiles: [fluxon_tcp]
 
+  ci_top_attention_log_mgmt:
+    ci:
+      subject: rust
+      runtime_contract: rust_self_managed
+    select:
+      scales: [n1_kvowner_dram_20gib]
+      profiles: [fluxon_tcp]
+
   ci_top_attention_mq_core:
     ci:
       subject: mq
@@ -319,6 +327,10 @@ profiles:
             doc_site_base_url: example.com
           ci_top_attention_bin_kvtest:
             kv_test_rounds: all
+          ci_top_attention_log_mgmt:
+            enabled: true
+          ci_top_attention_log_mgmt:
+            enabled: true
           ci_top_attention_mq_core: {}
         runtime_contracts:
           cluster_kv_owner: &cluster_kv_owner_runtime
@@ -427,7 +439,7 @@ profiles:
               # Self-host benchmark nodes are launched by the host-side deployer, not inside a
               # container with /hostworkdir mounted. Use the real host path so both infra44/46
               # benchmark nodes can open the same self-host shared-memory root directly.
-              shared_memory_path: __STACK_SHARED_MEMORY_PATH__
+              share_mem_path: __STACK_SHARE_MEM_PATH__
           mq_base:
             capacity: 40
             ttl_seconds: 90
@@ -465,6 +477,10 @@ profiles:
             doc_site_base_url: example.com
           ci_top_attention_bin_kvtest:
             kv_test_rounds: all
+          ci_top_attention_log_mgmt:
+            enabled: true
+          ci_top_attention_log_mgmt:
+            enabled: true
           ci_top_attention_mq_core: {}
       test_stack:
         <<: *common_test_stack_runtime
@@ -478,6 +494,10 @@ profiles:
             doc_site_base_url: example.com
           ci_top_attention_bin_kvtest:
             kv_test_rounds: all
+          ci_top_attention_log_mgmt:
+            enabled: true
+          ci_top_attention_log_mgmt:
+            enabled: true
           ci_top_attention_mq_core: {}
       test_stack:
         <<: *common_test_stack_runtime
@@ -491,6 +511,10 @@ profiles:
             doc_site_base_url: example.com
           ci_top_attention_bin_kvtest:
             kv_test_rounds: all
+          ci_top_attention_log_mgmt:
+            enabled: true
+          ci_top_attention_log_mgmt:
+            enabled: true
           ci_top_attention_mq_core: {}
       test_stack:
         <<: *common_test_stack_runtime

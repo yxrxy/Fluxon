@@ -32,20 +32,33 @@ def parse_python_passthrough(description: str) -> tuple[str, list[str]]:
     return args.python, passthrough
 
 
-def run_pytest(description: str, paths: Iterable[str]) -> int:
-    python, passthrough = parse_python_passthrough(description)
-    return call([python, "-m", "pytest", *paths, *passthrough])
+def run_pytest(
+    description: str,
+    paths: Iterable[str],
+    *,
+    passthrough: Sequence[str] | None = None,
+) -> int:
+    python, _ = parse_python_passthrough(description)
+    effective_passthrough = [] if passthrough is None else list(passthrough)
+    return call([python, "-m", "pytest", *paths, *effective_passthrough])
 
 
-def run_python_file(description: str, path: str, extra_args: Iterable[str] = ()) -> int:
-    python, passthrough = parse_python_passthrough(description)
-    return call([python, "-u", str(REPO_ROOT / path), *extra_args, *passthrough])
+def run_python_file(
+    description: str,
+    path: str,
+    extra_args: Iterable[str] = (),
+) -> int:
+    python, _ = parse_python_passthrough(description)
+    return call([python, "-u", str(REPO_ROOT / path), *extra_args])
 
 
-def run_python_files(description: str, paths: Iterable[str]) -> int:
-    python, passthrough = parse_python_passthrough(description)
+def run_python_files(
+    description: str,
+    paths: Iterable[str],
+) -> int:
+    python, _ = parse_python_passthrough(description)
     for path in paths:
-        rc = call([python, "-u", str(REPO_ROOT / path), *passthrough])
+        rc = call([python, "-u", str(REPO_ROOT / path)])
         if rc != 0:
             return rc
     return 0
@@ -150,7 +163,13 @@ def _prepare_cargo_env(env: dict[str, str] | None) -> dict[str, str] | None:
     return prepared_env
 
 
-def run_cargo(args: Iterable[str], *, env: dict[str, str] | None = None) -> int:
+def run_cargo(
+    args: Iterable[str],
+    *,
+    env: dict[str, str] | None = None,
+    passthrough: Sequence[str] | None = None,
+) -> int:
     # Rust test binaries launched via cargo run/load depend on the wheel-bundled native
     # runtime under the active venv. Keep one authoritative search root for all wrappers.
-    return call(["cargo", *args], env=_prepare_cargo_env(env))
+    effective_passthrough = [] if passthrough is None else list(passthrough)
+    return call(["cargo", *args, *effective_passthrough], env=_prepare_cargo_env(env))
