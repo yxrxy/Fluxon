@@ -192,7 +192,7 @@ from pathlib import Path
 import yaml
 
 from fluxon_py.api_ext_chan import ChanRole, ChanType, MPMCChanConsumer, new_or_bind_with_unique_key
-from fluxon_py.api_error import ChannelClosedError
+from fluxon_py.api_error import ChannelClosedError, MessageConsumptionNoNewMessageError
 from fluxon_py.config import FluxonKvClientConfig
 from fluxon_py.kvclient import new_store
 from fluxon_py.logging import init_logger
@@ -280,6 +280,10 @@ def main() -> None:
                     if isinstance(err, ChannelClosedError):
                         logger.info("[consumer] close observed, exit loop")
                         break
+                    if isinstance(err, MessageConsumptionNoNewMessageError):
+                        if shutdown_requested.wait(0.2):
+                            break
+                        continue
                     raise SystemExit(f"get_data failed: {err}")
                 for raw in res.unwrap() or []:
                     payload = raw.get("payload", b"") if isinstance(raw, dict) else raw

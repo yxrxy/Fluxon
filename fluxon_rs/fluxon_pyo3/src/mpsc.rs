@@ -78,6 +78,7 @@ const RUST_KV_DELETE_TIMEOUT: Duration = Duration::from_secs(10);
 const RUST_KV_DELETE_JOIN_WARN_INTERVAL: Duration = Duration::from_secs(1);
 const PAYLOAD_STAGE_WATCHDOG_INTERVAL: Duration = Duration::from_secs(2);
 const PAYLOAD_STAGE_SLOW_WARN_THRESHOLD: Duration = Duration::from_secs(1);
+const BROKER_EMPTY_POLL_INTERVAL: Duration = Duration::from_millis(20);
 const GET_ONE_PENDING_WARN_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Global runtime for standalone PyO3 helpers (e.g., lease_manager.rs).
@@ -1100,6 +1101,7 @@ impl MpscConsumerHandle {
         }
 
         let runtime = self.kv_runtime.clone();
+        let shutdown_for_task = self.shutdown.clone();
 
         let inner = self
             .inner
@@ -1146,14 +1148,28 @@ impl MpscConsumerHandle {
                     }
                 }
                 ConsumerGetMode::Broker { broker, timeout_ms } => {
-                    let fut = guard.inner_mut().get_with_payload_via_broker(&broker);
                     if let Some(ms) = timeout_ms {
-                        match tokio::time::timeout(Duration::from_millis(ms as u64), fut).await {
-                            Ok(result) => result,
-                            Err(_) => Err(CoreMpscError::NoMessage),
+                        let timeout = Duration::from_millis(ms.max(0) as u64);
+                        let deadline = Instant::now() + timeout;
+                        loop {
+                            match guard.inner_mut().get_with_payload_via_broker(&broker).await {
+                                Err(CoreMpscError::NoMessage)
+                                    if !shutdown_for_task.is_closed()
+                                        && Instant::now() < deadline =>
+                                {
+                                    let remaining =
+                                        deadline.saturating_duration_since(Instant::now());
+                                    tokio::time::sleep(std::cmp::min(
+                                        BROKER_EMPTY_POLL_INTERVAL,
+                                        remaining,
+                                    ))
+                                    .await;
+                                }
+                                result => break result,
+                            }
                         }
                     } else {
-                        fut.await
+                        guard.inner_mut().get_with_payload_via_broker(&broker).await
                     }
                 }
             };
@@ -1359,6 +1375,7 @@ impl MpscConsumerHandle {
         let chan_id_for_log = self.chan_id();
         let consumer_idx_for_log = self.consumer_idx();
         let runtime = self.kv_runtime.clone();
+        let shutdown_for_task = self.shutdown.clone();
         let inner = self
             .inner
             .take()
@@ -1371,16 +1388,33 @@ impl MpscConsumerHandle {
         runtime.spawn(async move {
             let mut guard = BatchConsumerGuard::new(inner, tx, ShutdownCtl::new());
             let res = {
-                let fut = guard
-                    .inner_mut()
-                    .get_batch_with_payload_via_broker(&broker, batch_size);
                 if let Some(ms) = timeout_ms {
-                    match tokio::time::timeout(Duration::from_millis(ms as u64), fut).await {
-                        Ok(result) => result,
-                        Err(_) => Err(CoreMpscError::NoMessage),
+                    let timeout = Duration::from_millis(ms.max(0) as u64);
+                    let deadline = Instant::now() + timeout;
+                    loop {
+                        match guard
+                            .inner_mut()
+                            .get_batch_with_payload_via_broker(&broker, batch_size)
+                            .await
+                        {
+                            Err(CoreMpscError::NoMessage)
+                                if !shutdown_for_task.is_closed() && Instant::now() < deadline =>
+                            {
+                                let remaining = deadline.saturating_duration_since(Instant::now());
+                                tokio::time::sleep(std::cmp::min(
+                                    BROKER_EMPTY_POLL_INTERVAL,
+                                    remaining,
+                                ))
+                                .await;
+                            }
+                            result => break result,
+                        }
                     }
                 } else {
-                    fut.await
+                    guard
+                        .inner_mut()
+                        .get_batch_with_payload_via_broker(&broker, batch_size)
+                        .await
                 }
             };
             guard.finish(res);
