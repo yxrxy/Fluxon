@@ -481,8 +481,7 @@ def _build_example_config(
             "instance_key": f"example_ctrlc_broker_{unique_suffix}",
             "fluxonkv_spec": {
                 "cluster_name": cluster_name,
-                "shared_memory_path": share_mem_path,
-                "shared_file_path": str((Path(share_mem_path).parent / "sharefile").resolve()),
+                "share_mem_path": share_mem_path,
                 "p2p_listen_port": broker_port,
             },
         },
