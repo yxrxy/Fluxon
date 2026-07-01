@@ -93,68 +93,6 @@ pub struct BrokerCommitBatchOutcome {
     pub cleanup: Vec<BrokerEnvelope>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum BrokerLogRecord {
-    UpsertChannel {
-        config: BrokerChannelConfig,
-    },
-    DeleteChannel {
-        channel_id: i64,
-    },
-    Reserve {
-        channel_id: i64,
-        producer_id: String,
-        msg_id: i64,
-        reservation_id: u64,
-        payload_key: String,
-        payload_bytes: u64,
-        reserved_at_ms: i64,
-    },
-    Publish {
-        channel_id: i64,
-        reservation_id: u64,
-        published_at_ms: i64,
-    },
-    Abort {
-        channel_id: i64,
-        reservation_id: u64,
-    },
-    Fetch {
-        channel_id: i64,
-        reservation_id: u64,
-        consumer_id: String,
-        fetched_at_ms: i64,
-    },
-    Commit {
-        channel_id: i64,
-        reservation_id: u64,
-        committed_at_ms: i64,
-    },
-    CleanupAck {
-        channel_id: i64,
-        reservation_id: u64,
-    },
-    RequeueInflight {
-        channel_id: i64,
-        reservation_id: u64,
-    },
-}
-
-impl BrokerLogRecord {
-    fn reservation_id(&self) -> Option<u64> {
-        match self {
-            BrokerLogRecord::Reserve { reservation_id, .. }
-            | BrokerLogRecord::Publish { reservation_id, .. }
-            | BrokerLogRecord::Abort { reservation_id, .. }
-            | BrokerLogRecord::Fetch { reservation_id, .. }
-            | BrokerLogRecord::Commit { reservation_id, .. }
-            | BrokerLogRecord::CleanupAck { reservation_id, .. }
-            | BrokerLogRecord::RequeueInflight { reservation_id, .. } => Some(*reservation_id),
-            BrokerLogRecord::UpsertChannel { .. } | BrokerLogRecord::DeleteChannel { .. } => None,
-        }
-    }
-}
-
 #[derive(Debug, Error, PartialEq, Eq, Clone, Serialize, Deserialize, Encode, Decode)]
 pub enum BrokerError {
     #[error("broker channel not found: channel_id={0}")]
@@ -207,7 +145,7 @@ pub enum BrokerError {
         reservation_id: u64,
     },
 
-    #[error("invalid broker log record: {0}")]
+    #[error("invalid broker state transition: {0}")]
     InvalidRecord(String),
 
     #[error("broker master unavailable: {0}")]
@@ -223,7 +161,6 @@ pub enum BrokerError {
 #[derive(Debug, Default)]
 pub struct LocalBroker {
     state: BrokerState,
-    log: Vec<BrokerLogRecord>,
 }
 
 #[derive(Debug)]
@@ -254,7 +191,6 @@ struct ChannelState {
     inflight_order: VecDeque<u64>,
     cleanup: VecDeque<BrokerEnvelope>,
     cleanup_inflight: HashMap<u64, BrokerEnvelope>,
-    committed: HashSet<u64>,
     used_slots: i64,
     reserve_waiters: VecDeque<ReserveWaiter>,
     fetch_waiters: VecDeque<FetchWaiter>,
@@ -272,7 +208,6 @@ impl ChannelState {
             inflight_order: VecDeque::new(),
             cleanup: VecDeque::new(),
             cleanup_inflight: HashMap::new(),
-            committed: HashSet::new(),
             used_slots: 0,
             reserve_waiters: VecDeque::new(),
             fetch_waiters: VecDeque::new(),
@@ -305,50 +240,96 @@ impl LocalBroker {
                 payload_byte_capacity: payload_byte_capacity.max(1),
                 used_payload_bytes: 0,
             },
-            log: Vec::new(),
         }
-    }
-
-    pub fn from_log(records: &[BrokerLogRecord]) -> Result<Self, BrokerError> {
-        let mut broker = Self::new();
-        for record in records {
-            broker.apply_log_record(record.clone())?;
-            broker.log.push(record.clone());
-        }
-        Ok(broker)
-    }
-
-    pub fn log_records(&self) -> &[BrokerLogRecord] {
-        &self.log
     }
 
     pub fn upsert_channel(&mut self, config: BrokerChannelConfig) -> Result<(), BrokerError> {
-        let record = self.upsert_channel_record(config)?;
-        self.apply_and_record(record)
+        validate_capacity(&config)?;
+        match self.state.channels.get_mut(&config.channel_id) {
+            Some(channel) => {
+                if config.capacity < channel.used_slots {
+                    return Err(BrokerError::InvalidRecord(format!(
+                        "channel_id={} capacity={} below used_slots={}",
+                        config.channel_id, config.capacity, channel.used_slots
+                    )));
+                }
+                channel.config = config;
+            }
+            None => {
+                self.state
+                    .channels
+                    .insert(config.channel_id, ChannelState::new(config));
+            }
+        }
+        Ok(())
     }
 
     pub fn delete_channel(&mut self, channel_id: i64) -> Result<Vec<String>, BrokerError> {
         let payload_keys = self.delete_channel_state(channel_id);
-        self.log.push(BrokerLogRecord::DeleteChannel { channel_id });
         Ok(payload_keys)
     }
 
     pub fn reserve(&mut self, req: BrokerReserveRequest) -> Result<BrokerReservation, BrokerError> {
-        let channel_id = req.channel_id;
-        let record = self.reserve_record(req)?;
-        let reservation_id = record.reservation_id().ok_or_else(|| {
-            BrokerError::InvalidRecord("reserve record missing reservation_id".to_string())
-        })?;
-        self.apply_and_record(record)?;
-        let envelope = self
-            .channel(channel_id)?
-            .pending
-            .get(&reservation_id)
-            .cloned()
-            .ok_or(BrokerError::ReservationNotFound {
-                channel_id,
-                reservation_id,
-            })?;
+        let channel = self.channel(req.channel_id)?;
+        if broker_category_enforces_capacity(req.category)
+            && channel.used_slots >= channel.config.capacity
+        {
+            return Err(BrokerError::ChannelFull {
+                channel_id: req.channel_id,
+                capacity: channel.config.capacity,
+                used_slots: channel.used_slots,
+            });
+        }
+
+        let msg_id = channel
+            .next_msg_by_producer
+            .get(&req.producer_id)
+            .copied()
+            .unwrap_or(PRODUCE_OFFSET_BEGIN + 1);
+        let reservation_id = channel.next_reservation_id;
+        let payload_key = keys::backend_message_key_with_category(
+            req.channel_id,
+            &req.producer_id,
+            msg_id,
+            &req.category,
+        );
+        let payload_bytes = req.payload_bytes.max(1);
+        if payload_bytes > self.state.payload_byte_capacity {
+            return Err(BrokerError::PayloadTooLarge {
+                requested_bytes: payload_bytes,
+                capacity_bytes: self.state.payload_byte_capacity,
+            });
+        }
+        if self.state.used_payload_bytes.saturating_add(payload_bytes)
+            > self.state.payload_byte_capacity
+        {
+            return Err(BrokerError::PayloadBytesFull {
+                requested_bytes: payload_bytes,
+                capacity_bytes: self.state.payload_byte_capacity,
+                used_bytes: self.state.used_payload_bytes,
+            });
+        }
+
+        let envelope = BrokerEnvelope {
+            channel_id: req.channel_id,
+            producer_id: req.producer_id,
+            msg_id,
+            reservation_id,
+            payload_key,
+            payload_bytes,
+            reserved_at_ms: req.now_ms,
+            published_at_ms: None,
+        };
+        let channel = self.channel_mut(req.channel_id)?;
+        channel.next_reservation_id = reservation_id + 1;
+        let next_msg = channel
+            .next_msg_by_producer
+            .entry(envelope.producer_id.clone())
+            .or_insert(PRODUCE_OFFSET_BEGIN + 1);
+        *next_msg = (*next_msg).max(msg_id + 1);
+        channel.pending.insert(reservation_id, envelope.clone());
+        channel.used_slots += 1;
+        self.state.used_payload_bytes += payload_bytes;
         Ok(BrokerReservation { envelope })
     }
 
@@ -358,45 +339,47 @@ impl LocalBroker {
         reservation_id: u64,
         now_ms: i64,
     ) -> Result<BrokerEnvelope, BrokerError> {
-        let record = self.publish_record(channel_id, reservation_id, now_ms)?;
-        self.apply_and_record(record)?;
-        self.channel(channel_id)?
-            .visible
-            .iter()
-            .find(|env| env.reservation_id == reservation_id)
-            .cloned()
-            .ok_or(BrokerError::ReservationNotFound {
-                channel_id,
-                reservation_id,
-            })
+        let channel = self.channel_mut(channel_id)?;
+        let mut envelope =
+            channel
+                .pending
+                .remove(&reservation_id)
+                .ok_or(BrokerError::ReservationNotFound {
+                    channel_id,
+                    reservation_id,
+                })?;
+        envelope.published_at_ms = Some(now_ms);
+        channel.visible.push_back(envelope.clone());
+        Ok(envelope)
     }
 
     pub fn abort(&mut self, channel_id: i64, reservation_id: u64) -> Result<(), BrokerError> {
-        let record = self.abort_record(channel_id, reservation_id)?;
-        self.apply_and_record(record)
+        let channel = self.channel_mut(channel_id)?;
+        let envelope =
+            channel
+                .pending
+                .remove(&reservation_id)
+                .ok_or(BrokerError::ReservationNotFound {
+                    channel_id,
+                    reservation_id,
+                })?;
+        channel.used_slots -= 1;
+        self.release_payload_bytes(envelope.payload_bytes);
+        Ok(())
     }
 
     pub fn fetch_next(
         &mut self,
         req: BrokerFetchRequest,
     ) -> Result<Option<BrokerFetchedMessage>, BrokerError> {
-        let channel_id = req.channel_id;
-        let Some(record) = self.fetch_record(req)? else {
+        let channel = self.channel_mut(req.channel_id)?;
+        let Some(envelope) = channel.visible.pop_front() else {
             return Ok(None);
         };
-        let reservation_id = record.reservation_id().ok_or_else(|| {
-            BrokerError::InvalidRecord("fetch record missing reservation_id".to_string())
-        })?;
-        self.apply_and_record(record)?;
-        let envelope = self
-            .channel(channel_id)?
+        channel
             .inflight
-            .get(&reservation_id)
-            .cloned()
-            .ok_or(BrokerError::DeliveryNotFound {
-                channel_id,
-                reservation_id,
-            })?;
+            .insert(envelope.reservation_id, envelope.clone());
+        channel.inflight_order.push_back(envelope.reservation_id);
         Ok(Some(BrokerFetchedMessage { envelope }))
     }
 
@@ -421,17 +404,28 @@ impl LocalBroker {
         reservation_id: u64,
         now_ms: i64,
     ) -> Result<BrokerCommitOutcome, BrokerError> {
-        let Some(record) = self.commit_record(channel_id, reservation_id, now_ms)? else {
+        let _ = now_ms;
+        let channel = self.channel_mut(channel_id)?;
+        if cleanup_contains(channel, reservation_id) {
             return Ok(BrokerCommitOutcome {
                 first_commit: false,
                 cleanup: None,
             });
-        };
-        self.apply_and_record(record)?;
-        let cleanup = self.channel(channel_id)?.cleanup.back().cloned();
+        }
+        let envelope =
+            channel
+                .inflight
+                .remove(&reservation_id)
+                .ok_or(BrokerError::DeliveryNotFound {
+                    channel_id,
+                    reservation_id,
+                })?;
+        remove_from_deque(&mut channel.inflight_order, reservation_id);
+        channel.cleanup.push_back(envelope.clone());
+        channel.used_slots -= 1;
         Ok(BrokerCommitOutcome {
             first_commit: true,
-            cleanup,
+            cleanup: Some(envelope),
         })
     }
 
@@ -463,8 +457,18 @@ impl LocalBroker {
         channel_id: i64,
         reservation_id: u64,
     ) -> Result<(), BrokerError> {
-        let record = self.requeue_inflight_record(channel_id, reservation_id)?;
-        self.apply_and_record(record)
+        let channel = self.channel_mut(channel_id)?;
+        let envelope =
+            channel
+                .inflight
+                .remove(&reservation_id)
+                .ok_or(BrokerError::DeliveryNotFound {
+                    channel_id,
+                    reservation_id,
+                })?;
+        remove_from_deque(&mut channel.inflight_order, reservation_id);
+        channel.visible.push_front(envelope);
+        Ok(())
     }
 
     pub fn requeue_inflight_batch(
@@ -529,8 +533,7 @@ impl LocalBroker {
     }
 
     pub fn cleanup_ack(&mut self, channel_id: i64, reservation_id: u64) -> Result<(), BrokerError> {
-        let record = self.cleanup_ack_record(channel_id, reservation_id)?;
-        let _ = self.apply_cleanup_ack_and_record(record, true)?;
+        let _ = self.apply_cleanup_ack(channel_id, reservation_id, true)?;
         Ok(())
     }
 
@@ -539,8 +542,7 @@ impl LocalBroker {
         channel_id: i64,
         reservation_id: u64,
     ) -> Result<u64, BrokerError> {
-        let record = self.cleanup_ack_record(channel_id, reservation_id)?;
-        self.apply_cleanup_ack_and_record(record, false)
+        self.apply_cleanup_ack(channel_id, reservation_id, false)
     }
 
     pub fn cleanup_nack(
@@ -551,190 +553,6 @@ impl LocalBroker {
         let channel = self.channel_mut(channel_id)?;
         if let Some(envelope) = channel.cleanup_inflight.remove(&reservation_id) {
             channel.cleanup.push_front(envelope);
-        }
-        Ok(())
-    }
-
-    pub fn apply_log_record(&mut self, record: BrokerLogRecord) -> Result<(), BrokerError> {
-        match record {
-            BrokerLogRecord::UpsertChannel { config } => {
-                validate_capacity(&config)?;
-                match self.state.channels.get_mut(&config.channel_id) {
-                    Some(channel) => {
-                        if config.capacity < channel.used_slots {
-                            return Err(BrokerError::InvalidRecord(format!(
-                                "channel_id={} capacity={} below used_slots={}",
-                                config.channel_id, config.capacity, channel.used_slots
-                            )));
-                        }
-                        channel.config = config;
-                    }
-                    None => {
-                        self.state
-                            .channels
-                            .insert(config.channel_id, ChannelState::new(config));
-                    }
-                }
-            }
-            BrokerLogRecord::DeleteChannel { channel_id } => {
-                let _ = self.delete_channel_state(channel_id);
-            }
-            BrokerLogRecord::Reserve {
-                channel_id,
-                producer_id,
-                msg_id,
-                reservation_id,
-                payload_key,
-                payload_bytes,
-                reserved_at_ms,
-            } => {
-                let channel = self.channel(channel_id)?;
-                if channel.pending.contains_key(&reservation_id)
-                    || channel
-                        .visible
-                        .iter()
-                        .any(|env| env.reservation_id == reservation_id)
-                    || channel.inflight.contains_key(&reservation_id)
-                    || channel.committed.contains(&reservation_id)
-                {
-                    return Err(BrokerError::InvalidRecord(format!(
-                        "duplicate reservation_id={} for channel_id={}",
-                        reservation_id, channel_id
-                    )));
-                }
-                if payload_bytes > self.state.payload_byte_capacity {
-                    return Err(BrokerError::PayloadTooLarge {
-                        requested_bytes: payload_bytes,
-                        capacity_bytes: self.state.payload_byte_capacity,
-                    });
-                }
-                if self.state.used_payload_bytes.saturating_add(payload_bytes)
-                    > self.state.payload_byte_capacity
-                {
-                    return Err(BrokerError::PayloadBytesFull {
-                        requested_bytes: payload_bytes,
-                        capacity_bytes: self.state.payload_byte_capacity,
-                        used_bytes: self.state.used_payload_bytes,
-                    });
-                }
-
-                let channel = self.channel_mut(channel_id)?;
-                channel.next_reservation_id = channel.next_reservation_id.max(reservation_id + 1);
-                let next_msg = channel
-                    .next_msg_by_producer
-                    .entry(producer_id.clone())
-                    .or_insert(PRODUCE_OFFSET_BEGIN + 1);
-                *next_msg = (*next_msg).max(msg_id + 1);
-
-                let envelope = BrokerEnvelope {
-                    channel_id,
-                    producer_id,
-                    msg_id,
-                    reservation_id,
-                    payload_key,
-                    payload_bytes,
-                    reserved_at_ms,
-                    published_at_ms: None,
-                };
-                channel.pending.insert(reservation_id, envelope);
-                channel.used_slots += 1;
-                self.state.used_payload_bytes += payload_bytes;
-            }
-            BrokerLogRecord::Publish {
-                channel_id,
-                reservation_id,
-                published_at_ms,
-            } => {
-                let channel = self.channel_mut(channel_id)?;
-                let mut envelope = channel.pending.remove(&reservation_id).ok_or(
-                    BrokerError::ReservationNotFound {
-                        channel_id,
-                        reservation_id,
-                    },
-                )?;
-                envelope.published_at_ms = Some(published_at_ms);
-                channel.visible.push_back(envelope);
-            }
-            BrokerLogRecord::Abort {
-                channel_id,
-                reservation_id,
-            } => {
-                let channel = self.channel_mut(channel_id)?;
-                let envelope = channel.pending.remove(&reservation_id).ok_or(
-                    BrokerError::ReservationNotFound {
-                        channel_id,
-                        reservation_id,
-                    },
-                )?;
-                channel.used_slots -= 1;
-                self.release_payload_bytes(envelope.payload_bytes);
-            }
-            BrokerLogRecord::Fetch {
-                channel_id,
-                reservation_id,
-                consumer_id: _,
-                fetched_at_ms: _,
-            } => {
-                let channel = self.channel_mut(channel_id)?;
-                let Some(front) = channel.visible.front() else {
-                    return Err(BrokerError::ReservationNotFound {
-                        channel_id,
-                        reservation_id,
-                    });
-                };
-                if front.reservation_id != reservation_id {
-                    return Err(BrokerError::InvalidRecord(format!(
-                        "fetch order mismatch for channel_id={}: expected_reservation_id={} actual_reservation_id={}",
-                        channel_id, front.reservation_id, reservation_id
-                    )));
-                }
-                let envelope = channel
-                    .visible
-                    .pop_front()
-                    .expect("visible front checked above");
-                channel.inflight.insert(reservation_id, envelope);
-                channel.inflight_order.push_back(reservation_id);
-            }
-            BrokerLogRecord::Commit {
-                channel_id,
-                reservation_id,
-                committed_at_ms: _,
-            } => {
-                let channel = self.channel_mut(channel_id)?;
-                if channel.committed.contains(&reservation_id) {
-                    return Ok(());
-                }
-                let envelope = channel.inflight.remove(&reservation_id).ok_or(
-                    BrokerError::DeliveryNotFound {
-                        channel_id,
-                        reservation_id,
-                    },
-                )?;
-                remove_from_deque(&mut channel.inflight_order, reservation_id);
-                channel.committed.insert(reservation_id);
-                channel.cleanup.push_back(envelope);
-                channel.used_slots -= 1;
-            }
-            BrokerLogRecord::CleanupAck {
-                channel_id,
-                reservation_id,
-            } => {
-                self.apply_cleanup_ack(channel_id, reservation_id, true)?;
-            }
-            BrokerLogRecord::RequeueInflight {
-                channel_id,
-                reservation_id,
-            } => {
-                let channel = self.channel_mut(channel_id)?;
-                let envelope = channel.inflight.remove(&reservation_id).ok_or(
-                    BrokerError::DeliveryNotFound {
-                        channel_id,
-                        reservation_id,
-                    },
-                )?;
-                remove_from_deque(&mut channel.inflight_order, reservation_id);
-                channel.visible.push_front(envelope);
-            }
         }
         Ok(())
     }
@@ -818,223 +636,11 @@ impl LocalBroker {
                 reservation_id,
             });
         };
-        channel.committed.remove(&reservation_id);
         let payload_bytes = envelope.payload_bytes;
         if release_payload_now {
             self.release_payload_bytes(payload_bytes);
         }
         Ok(payload_bytes)
-    }
-
-    fn apply_and_record(&mut self, record: BrokerLogRecord) -> Result<(), BrokerError> {
-        self.apply_log_record(record.clone())?;
-        self.log.push(record);
-        Ok(())
-    }
-
-    fn apply_cleanup_ack_and_record(
-        &mut self,
-        record: BrokerLogRecord,
-        release_payload_now: bool,
-    ) -> Result<u64, BrokerError> {
-        let BrokerLogRecord::CleanupAck {
-            channel_id,
-            reservation_id,
-        } = record.clone()
-        else {
-            return Err(BrokerError::InvalidRecord(
-                "apply_cleanup_ack_and_record requires CleanupAck".to_string(),
-            ));
-        };
-        let payload_bytes =
-            self.apply_cleanup_ack(channel_id, reservation_id, release_payload_now)?;
-        self.log.push(record);
-        Ok(payload_bytes)
-    }
-
-    fn upsert_channel_record(
-        &self,
-        config: BrokerChannelConfig,
-    ) -> Result<BrokerLogRecord, BrokerError> {
-        validate_capacity(&config)?;
-        if let Some(channel) = self.state.channels.get(&config.channel_id) {
-            if config.capacity < channel.used_slots {
-                return Err(BrokerError::InvalidRecord(format!(
-                    "channel_id={} capacity={} below used_slots={}",
-                    config.channel_id, config.capacity, channel.used_slots
-                )));
-            }
-        }
-        Ok(BrokerLogRecord::UpsertChannel { config })
-    }
-
-    fn reserve_record(&self, req: BrokerReserveRequest) -> Result<BrokerLogRecord, BrokerError> {
-        let channel = self.channel(req.channel_id)?;
-        if broker_category_enforces_capacity(req.category)
-            && channel.used_slots >= channel.config.capacity
-        {
-            return Err(BrokerError::ChannelFull {
-                channel_id: req.channel_id,
-                capacity: channel.config.capacity,
-                used_slots: channel.used_slots,
-            });
-        }
-
-        let msg_id = channel
-            .next_msg_by_producer
-            .get(&req.producer_id)
-            .copied()
-            .unwrap_or(PRODUCE_OFFSET_BEGIN + 1);
-        let reservation_id = channel.next_reservation_id;
-        let payload_key = keys::backend_message_key_with_category(
-            req.channel_id,
-            &req.producer_id,
-            msg_id,
-            &req.category,
-        );
-        let payload_bytes = req.payload_bytes.max(1);
-        if payload_bytes > self.state.payload_byte_capacity {
-            return Err(BrokerError::PayloadTooLarge {
-                requested_bytes: payload_bytes,
-                capacity_bytes: self.state.payload_byte_capacity,
-            });
-        }
-        if self.state.used_payload_bytes.saturating_add(payload_bytes)
-            > self.state.payload_byte_capacity
-        {
-            return Err(BrokerError::PayloadBytesFull {
-                requested_bytes: payload_bytes,
-                capacity_bytes: self.state.payload_byte_capacity,
-                used_bytes: self.state.used_payload_bytes,
-            });
-        }
-        Ok(BrokerLogRecord::Reserve {
-            channel_id: req.channel_id,
-            producer_id: req.producer_id,
-            msg_id,
-            reservation_id,
-            payload_key,
-            payload_bytes,
-            reserved_at_ms: req.now_ms,
-        })
-    }
-
-    fn publish_record(
-        &self,
-        channel_id: i64,
-        reservation_id: u64,
-        now_ms: i64,
-    ) -> Result<BrokerLogRecord, BrokerError> {
-        let channel = self.channel(channel_id)?;
-        if !channel.pending.contains_key(&reservation_id) {
-            return Err(BrokerError::ReservationNotFound {
-                channel_id,
-                reservation_id,
-            });
-        }
-        Ok(BrokerLogRecord::Publish {
-            channel_id,
-            reservation_id,
-            published_at_ms: now_ms,
-        })
-    }
-
-    fn abort_record(
-        &self,
-        channel_id: i64,
-        reservation_id: u64,
-    ) -> Result<BrokerLogRecord, BrokerError> {
-        let channel = self.channel(channel_id)?;
-        if !channel.pending.contains_key(&reservation_id) {
-            return Err(BrokerError::ReservationNotFound {
-                channel_id,
-                reservation_id,
-            });
-        }
-        Ok(BrokerLogRecord::Abort {
-            channel_id,
-            reservation_id,
-        })
-    }
-
-    fn fetch_record(
-        &self,
-        req: BrokerFetchRequest,
-    ) -> Result<Option<BrokerLogRecord>, BrokerError> {
-        let reservation_id = match self.channel(req.channel_id)?.visible.front() {
-            Some(env) => env.reservation_id,
-            None => return Ok(None),
-        };
-        Ok(Some(BrokerLogRecord::Fetch {
-            channel_id: req.channel_id,
-            reservation_id,
-            consumer_id: req.consumer_id,
-            fetched_at_ms: req.now_ms,
-        }))
-    }
-
-    fn commit_record(
-        &self,
-        channel_id: i64,
-        reservation_id: u64,
-        now_ms: i64,
-    ) -> Result<Option<BrokerLogRecord>, BrokerError> {
-        let channel = self.channel(channel_id)?;
-        if channel.committed.contains(&reservation_id) {
-            return Ok(None);
-        }
-        if !channel.inflight.contains_key(&reservation_id) {
-            return Err(BrokerError::DeliveryNotFound {
-                channel_id,
-                reservation_id,
-            });
-        }
-        Ok(Some(BrokerLogRecord::Commit {
-            channel_id,
-            reservation_id,
-            committed_at_ms: now_ms,
-        }))
-    }
-
-    fn cleanup_ack_record(
-        &self,
-        channel_id: i64,
-        reservation_id: u64,
-    ) -> Result<BrokerLogRecord, BrokerError> {
-        let channel = self.channel(channel_id)?;
-        let exists = channel.cleanup_inflight.contains_key(&reservation_id)
-            || channel
-                .cleanup
-                .iter()
-                .any(|env| env.reservation_id == reservation_id);
-        if !exists {
-            return Err(BrokerError::ReservationNotFound {
-                channel_id,
-                reservation_id,
-            });
-        }
-        Ok(BrokerLogRecord::CleanupAck {
-            channel_id,
-            reservation_id,
-        })
-    }
-
-    fn requeue_inflight_record(
-        &self,
-        channel_id: i64,
-        reservation_id: u64,
-    ) -> Result<BrokerLogRecord, BrokerError> {
-        let channel = self.channel(channel_id)?;
-        if !channel.inflight.contains_key(&reservation_id) {
-            return Err(BrokerError::DeliveryNotFound {
-                channel_id,
-                reservation_id,
-            });
-        }
-        Ok(BrokerLogRecord::RequeueInflight {
-            channel_id,
-            reservation_id,
-        })
     }
 
     fn channel(&self, channel_id: i64) -> Result<&ChannelState, BrokerError> {
@@ -1149,6 +755,14 @@ fn collect_deleted_payloads(
         *payload_bytes = payload_bytes.saturating_add(envelope.payload_bytes);
         payload_keys.push(envelope.payload_key);
     }
+}
+
+fn cleanup_contains(channel: &ChannelState, reservation_id: u64) -> bool {
+    channel.cleanup_inflight.contains_key(&reservation_id)
+        || channel
+            .cleanup
+            .iter()
+            .any(|env| env.reservation_id == reservation_id)
 }
 
 enum BrokerCommand {
@@ -2715,40 +2329,6 @@ mod tests {
     }
 
     #[test]
-    fn replay_log_restores_visible_and_inflight_state() {
-        let mut broker = LocalBroker::new();
-        broker
-            .upsert_channel(BrokerChannelConfig {
-                channel_id: 9,
-                capacity: 4,
-            })
-            .unwrap();
-        let first = broker.reserve(reserve_req(9, "p0", 10)).unwrap();
-        let second = broker.reserve(reserve_req(9, "p1", 11)).unwrap();
-        broker
-            .publish(9, first.envelope.reservation_id, 20)
-            .unwrap();
-        broker
-            .publish(9, second.envelope.reservation_id, 21)
-            .unwrap();
-        let fetched = broker.fetch_next(fetch_req(9, "c0", 30)).unwrap().unwrap();
-        assert_eq!(fetched.envelope.producer_id, "p0");
-
-        let log = broker.log_records().to_vec();
-        let mut restored = LocalBroker::from_log(&log).unwrap();
-        restored.requeue_all_inflight(9).unwrap();
-
-        let redelivered = restored
-            .fetch_next(fetch_req(9, "c0", 40))
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            redelivered.envelope.reservation_id,
-            first.envelope.reservation_id
-        );
-    }
-
-    #[test]
     fn requeue_all_inflight_preserves_fetch_order() {
         let mut broker = LocalBroker::new();
         broker
@@ -2824,6 +2404,40 @@ mod tests {
 
         let next = broker.reserve(reserve_req(11, "p0", 50)).unwrap();
         assert_eq!(next.envelope.msg_id, 2);
+    }
+
+    #[test]
+    fn duplicate_commit_is_idempotent_until_cleanup_ack() {
+        let mut broker = LocalBroker::with_payload_byte_capacity(10);
+        broker
+            .upsert_channel(BrokerChannelConfig {
+                channel_id: 19,
+                capacity: 4,
+            })
+            .unwrap();
+
+        let reserved = broker.reserve(reserve_req_bytes(19, "p0", 6, 10)).unwrap();
+        broker
+            .publish(19, reserved.envelope.reservation_id, 20)
+            .unwrap();
+        let fetched = broker.fetch_next(fetch_req(19, "c0", 30)).unwrap().unwrap();
+        let reservation_id = fetched.envelope.reservation_id;
+
+        let first = broker.commit(19, reservation_id, 40).unwrap();
+        assert!(first.first_commit);
+        assert!(first.cleanup.is_some());
+        let duplicate = broker.commit(19, reservation_id, 41).unwrap();
+        assert!(!duplicate.first_commit);
+        assert!(duplicate.cleanup.is_none());
+
+        broker.cleanup_ack(19, reservation_id).unwrap();
+        assert_eq!(
+            broker.commit(19, reservation_id, 42).unwrap_err(),
+            BrokerError::DeliveryNotFound {
+                channel_id: 19,
+                reservation_id,
+            }
+        );
     }
 
     #[test]
