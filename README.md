@@ -324,7 +324,7 @@ Some earlier contribution records are no longer fully reflected in the current c
 - [Alluxio](https://github.com/Alluxio/alluxio): referenced in FS design and evaluation for file/object caching and data locality.
 - [pplx-garden](https://github.com/perplexityai/pplx-garden): referenced for broader AI data-plane design and high-performance AI infrastructure ideas.
 
-We thank these projects and their communities for making this work available as open source.
+We thank the maintainers and communities for their open-source work.
 
 <a id="license"></a>
 

@@ -325,7 +325,7 @@ ui
 - [Alluxio](https://github.com/Alluxio/alluxio)：用于 FS 设计和评估参考，尤其是文件/对象缓存和数据本地性相关能力。
 - [pplx-garden](https://github.com/perplexityai/pplx-garden)：用于更完整的 AI 数据面设计和高性能 AI 基础设施思路参考。
 
-感谢这些项目和社区持续开放高质量的开源工作。
+感谢维护者和社区的开源工作。
 
 <a id="许可证"></a>
 
