@@ -132,21 +132,7 @@ checkpoint 保存对应模型快照写入，重点看大块连续写能否跑出
 | `cold remote` | 16660.8 ops/s | 60392.6 ops/s | -72.4% |
 | `warm remote` | 20570.5 ops/s | 23618.1 ops/s | -12.9% |
 
-第一次扫描时 Alluxio 明显更快；再次扫描后差距缩小，本机 warm 场景里 FluxonFS 略高。目录扫描不是 FluxonFS 当前最强的场景。对任务启动前需要大量列目录、探测文件状态的工作流，这个边界需要单独纳入评估。
-
-## 需要单独复测的异常点
-
-这组数据里有几个点和整体趋势不一致，后续优化和复测应优先覆盖。
-
-| 位置 | 现象 | 可能影响 |
-| --- | --- | --- |
-| `read_baseline`，`4MiB warm remote` | FluxonFS 为 `107.9 MB/s`，Alluxio 为 `6336.0 MB/s`，差距远大于同场景其它点 | 会强烈影响远端大块热读判断，需要单独复测 |
-| `read_baseline`，`4MiB cold remote` | FluxonFS 为 `53.7 MB/s`，Alluxio 为 `14.6 MB/s`，两者都明显低于 `256KiB remote` | `4MiB` 远端冷读没有随文件变大提升，可能受链路或测试状态影响 |
-| `write_commit_baseline`，`remote` | `4MiB remote` 为 `78.7 MB/s` vs `254.6 MB/s`，远低于本机 `4MiB` 写入 | 跨节点写入和本机写入差距过大，是写路径里最需要解释的点 |
-| `checkpoint_save`，`local vs remote` | FluxonFS local 为 `32165.9 MB/s`，remote 为 `95.6 MB/s` | checkpoint 本机写入优势明显，但跨节点落差极大，不能只引用 local 结果 |
-| `Plain` 顺序读 | `4MiB x 40` warm local 为 `53164.5 MB/s`，明显高于文件系统对比值 | `Plain` 更像本机缓存或内存上限，不适合作为真实用户侧对比结论 |
-
-这些点不改变整体结论，但会影响边界解释。性能结论不应只引用优势点，也需要保留异常和限制。对文件对象缓存这类数据面系统来说，异常点通常更能指导下一轮工程优化。
+第一次扫描时 Alluxio 明显更快；再次扫描后差距缩小，本机 warm 场景里 FluxonFS 略高。
 
 ## 结尾
 

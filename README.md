@@ -34,6 +34,10 @@ Fluxon is designed around these problems. It separates data-plane resources, obj
 
 ![](./pics/fluxon_architecture.png)
 
+## Acknowledgements
+
+Fluxon learns from and builds on ideas and components from projects including `pplx-gardon`, `iceoryx`, `Alluxio`, `Mooncake`, and `Moka`: local IPC and shared-memory paths, large-object data-plane design, cache governance, and AI-oriented data movement.
+
 <a id="contents"></a>
 
 ## 🧭 Contents
