@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bitcode::{Decode, Encode};
@@ -8,7 +10,7 @@ use fluxon_commu::p2p::rpc::{MsgPack, MsgPackSerializePart, RPCCaller, RPCHandle
 use fluxon_commu::p2p::P2pModuleView;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Mutex};
 
 use crate::keys::{self, MqCategory};
 use crate::manager::PRODUCE_OFFSET_BEGIN;
@@ -25,6 +27,10 @@ const DEFAULT_BROKER_PAYLOAD_BYTES_CAP: u64 = 64 * 1024 * 1024 * 1024;
 const DEFAULT_BROKER_PAYLOAD_BYTES_CAP_PERCENT: u64 = 60;
 const DEFAULT_BROKER_CLEANUP_RELEASE_DELAY_MS: u64 = 0;
 const BROKER_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(15);
+const BROKER_RPC_RESPONSE_CACHE_LIMIT: usize = 65536;
+
+static BROKER_RPC_REQUEST_SEQ: AtomicU64 = AtomicU64::new(1);
+static BROKER_RPC_REQUEST_PREFIX: OnceLock<String> = OnceLock::new();
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
 pub struct BrokerChannelConfig {
@@ -459,6 +465,34 @@ impl LocalBroker {
     ) -> Result<(), BrokerError> {
         let record = self.requeue_inflight_record(channel_id, reservation_id)?;
         self.apply_and_record(record)
+    }
+
+    pub fn requeue_inflight_batch(
+        &mut self,
+        channel_id: i64,
+        reservation_ids: Vec<u64>,
+    ) -> Result<(), BrokerError> {
+        let channel = self.channel(channel_id)?;
+        let mut seen = HashSet::new();
+        for reservation_id in &reservation_ids {
+            if !seen.insert(*reservation_id) {
+                return Err(BrokerError::InvalidRecord(format!(
+                    "duplicate requeue reservation_id={} for channel_id={}",
+                    reservation_id, channel_id
+                )));
+            }
+            if !channel.inflight.contains_key(reservation_id) {
+                return Err(BrokerError::DeliveryNotFound {
+                    channel_id,
+                    reservation_id: *reservation_id,
+                });
+            }
+        }
+
+        for reservation_id in reservation_ids.into_iter().rev() {
+            self.requeue_inflight(channel_id, reservation_id)?;
+        }
+        Ok(())
     }
 
     pub fn requeue_all_inflight(&mut self, channel_id: i64) -> Result<(), BrokerError> {
@@ -1167,6 +1201,11 @@ enum BrokerCommand {
         reservation_id: u64,
         reply: oneshot::Sender<Result<(), BrokerError>>,
     },
+    RequeueInflightBatch {
+        channel_id: i64,
+        reservation_ids: Vec<u64>,
+        reply: oneshot::Sender<Result<(), BrokerError>>,
+    },
     RequeueAllInflight {
         channel_id: i64,
         reply: oneshot::Sender<Result<(), BrokerError>>,
@@ -1325,6 +1364,17 @@ impl LocalBrokerHandle {
                         reply,
                     } => {
                         let result = broker.requeue_inflight(channel_id, reservation_id);
+                        if result.is_ok() {
+                            drain_fetch_waiters_for_channel(&mut broker, channel_id);
+                        }
+                        let _ = reply.send(result);
+                    }
+                    BrokerCommand::RequeueInflightBatch {
+                        channel_id,
+                        reservation_ids,
+                        reply,
+                    } => {
+                        let result = broker.requeue_inflight_batch(channel_id, reservation_ids);
                         if result.is_ok() {
                             drain_fetch_waiters_for_channel(&mut broker, channel_id);
                         }
@@ -1499,6 +1549,19 @@ impl LocalBrokerHandle {
         .await
     }
 
+    async fn requeue_inflight_batch(
+        &self,
+        channel_id: i64,
+        reservation_ids: Vec<u64>,
+    ) -> Result<(), BrokerError> {
+        self.request(|reply| BrokerCommand::RequeueInflightBatch {
+            channel_id,
+            reservation_ids,
+            reply,
+        })
+        .await
+    }
+
     async fn requeue_all_inflight(&self, channel_id: i64) -> Result<(), BrokerError> {
         self.request(|reply| BrokerCommand::RequeueAllInflight { channel_id, reply })
             .await
@@ -1596,6 +1659,10 @@ enum BrokerRpcOperation {
         channel_id: i64,
         reservation_id: u64,
     },
+    RequeueInflightBatch {
+        channel_id: i64,
+        reservation_ids: Vec<u64>,
+    },
     RequeueAllInflight {
         channel_id: i64,
     },
@@ -1615,7 +1682,17 @@ enum BrokerRpcOperation {
 
 #[derive(Debug, Clone, Default, Encode, Decode)]
 struct BrokerRpcRequest {
+    request_id: String,
     op: BrokerRpcOperation,
+}
+
+impl BrokerRpcRequest {
+    fn new(op: BrokerRpcOperation) -> Self {
+        Self {
+            request_id: String::new(),
+            op,
+        }
+    }
 }
 
 impl MsgPackSerializePart for BrokerRpcRequest {
@@ -1652,6 +1729,13 @@ struct BrokerRpcResponse {
     reply: BrokerRpcReply,
 }
 
+#[derive(Default)]
+struct BrokerRpcResponseCache {
+    completed: HashMap<String, BrokerRpcResponse>,
+    completed_order: VecDeque<String>,
+    in_flight: HashMap<String, Vec<oneshot::Sender<BrokerRpcResponse>>>,
+}
+
 impl MsgPackSerializePart for BrokerRpcResponse {
     fn msg_id(&self) -> u32 {
         BROKER_RPC_RESP_MSG_ID
@@ -1661,6 +1745,7 @@ impl MsgPackSerializePart for BrokerRpcResponse {
 async fn execute_rpc_request(
     broker: &LocalBrokerHandle,
     request: BrokerRpcRequest,
+    allow_wait: bool,
 ) -> BrokerRpcResponse {
     let reply = match request.op {
         BrokerRpcOperation::Noop => BrokerRpcReply::Unit(Err(BrokerError::Rpc(
@@ -1684,9 +1769,15 @@ async fn execute_rpc_request(
             channel_id,
             reservation_id,
         } => BrokerRpcReply::Unit(broker.abort(channel_id, reservation_id).await),
-        BrokerRpcOperation::FetchNext { req } => {
+        BrokerRpcOperation::FetchNext { req } if allow_wait => {
             BrokerRpcReply::Fetch(broker.fetch_next(req).await)
         }
+        BrokerRpcOperation::FetchNext { req } => BrokerRpcReply::Fetch(
+            broker
+                .fetch_batch_available(req, 1)
+                .await
+                .map(|batch| batch.messages.into_iter().next()),
+        ),
         BrokerRpcOperation::FetchBatchAvailable { req, max_items } => {
             BrokerRpcReply::FetchBatch(broker.fetch_batch_available(req, max_items).await)
         }
@@ -1708,6 +1799,14 @@ async fn execute_rpc_request(
             channel_id,
             reservation_id,
         } => BrokerRpcReply::Unit(broker.requeue_inflight(channel_id, reservation_id).await),
+        BrokerRpcOperation::RequeueInflightBatch {
+            channel_id,
+            reservation_ids,
+        } => BrokerRpcReply::Unit(
+            broker
+                .requeue_inflight_batch(channel_id, reservation_ids)
+                .await,
+        ),
         BrokerRpcOperation::RequeueAllInflight { channel_id } => {
             BrokerRpcReply::Unit(broker.requeue_all_inflight(channel_id).await)
         }
@@ -1727,14 +1826,70 @@ async fn execute_rpc_request(
     BrokerRpcResponse { reply }
 }
 
+async fn execute_rpc_request_with_cache(
+    broker: &LocalBrokerHandle,
+    response_cache: &Arc<Mutex<BrokerRpcResponseCache>>,
+    request: BrokerRpcRequest,
+    allow_wait: bool,
+) -> BrokerRpcResponse {
+    let request_id = request.request_id.clone();
+    if request_id.is_empty() {
+        return execute_rpc_request(broker, request, allow_wait).await;
+    }
+
+    let wait_for_existing = {
+        let mut cache = response_cache.lock().await;
+        if let Some(response) = cache.completed.get(&request_id) {
+            return response.clone();
+        }
+        if let Some(waiters) = cache.in_flight.get_mut(&request_id) {
+            let (tx, rx) = oneshot::channel();
+            waiters.push(tx);
+            Some(rx)
+        } else {
+            cache.in_flight.insert(request_id.clone(), Vec::new());
+            None
+        }
+    };
+
+    if let Some(rx) = wait_for_existing {
+        return rx.await.unwrap_or(BrokerRpcResponse {
+            reply: BrokerRpcReply::Unit(Err(BrokerError::ActorClosed)),
+        });
+    }
+
+    let response = execute_rpc_request(broker, request, allow_wait).await;
+    let waiters = {
+        let mut cache = response_cache.lock().await;
+        let waiters = cache.in_flight.remove(&request_id).unwrap_or_default();
+        cache.completed.insert(request_id.clone(), response.clone());
+        cache.completed_order.push_back(request_id);
+        while cache.completed_order.len() > BROKER_RPC_RESPONSE_CACHE_LIMIT {
+            if let Some(old_request_id) = cache.completed_order.pop_front() {
+                cache.completed.remove(&old_request_id);
+            }
+        }
+        waiters
+    };
+
+    for waiter in waiters {
+        let _ = waiter.send(response.clone());
+    }
+    response
+}
+
 pub fn register_broker_service(p2p_view: P2pModuleView, queue_capacity: usize) {
     let broker = LocalBrokerHandle::spawn_actor(LocalBroker::new(), queue_capacity);
+    let response_cache = Arc::new(Mutex::new(BrokerRpcResponseCache::default()));
     let handler_view = p2p_view.clone();
     RPCHandler::<BrokerRpcRequest>::new().regist(p2p_view.p2p_module(), move |resp, msg| {
         let broker = broker.clone();
+        let response_cache = response_cache.clone();
         let handler_view = handler_view.clone();
         let _ = handler_view.spawn("fluxon_mq.broker.rpc", async move {
-            let response = execute_rpc_request(&broker, msg.serialize_part).await;
+            let response =
+                execute_rpc_request_with_cache(&broker, &response_cache, msg.serialize_part, false)
+                    .await;
             let _ = resp
                 .send_resp(MsgPack {
                     serialize_part: response,
@@ -1829,9 +1984,9 @@ impl BrokerHandle {
 
     pub async fn upsert_channel(&self, config: BrokerChannelConfig) -> Result<(), BrokerError> {
         match self
-            .request(BrokerRpcRequest {
-                op: BrokerRpcOperation::UpsertChannel { config },
-            })
+            .request(BrokerRpcRequest::new(BrokerRpcOperation::UpsertChannel {
+                config,
+            }))
             .await?
             .reply
         {
@@ -1845,9 +2000,9 @@ impl BrokerHandle {
 
     pub async fn delete_channel(&self, channel_id: i64) -> Result<Vec<String>, BrokerError> {
         match self
-            .request(BrokerRpcRequest {
-                op: BrokerRpcOperation::DeleteChannel { channel_id },
-            })
+            .request(BrokerRpcRequest::new(BrokerRpcOperation::DeleteChannel {
+                channel_id,
+            }))
             .await?
             .reply
         {
@@ -1864,9 +2019,7 @@ impl BrokerHandle {
         req: BrokerReserveRequest,
     ) -> Result<BrokerReservation, BrokerError> {
         match self
-            .request(BrokerRpcRequest {
-                op: BrokerRpcOperation::Reserve { req },
-            })
+            .request(BrokerRpcRequest::new(BrokerRpcOperation::Reserve { req }))
             .await?
             .reply
         {
@@ -1885,13 +2038,11 @@ impl BrokerHandle {
         now_ms: i64,
     ) -> Result<BrokerEnvelope, BrokerError> {
         match self
-            .request(BrokerRpcRequest {
-                op: BrokerRpcOperation::Publish {
-                    channel_id,
-                    reservation_id,
-                    now_ms,
-                },
-            })
+            .request(BrokerRpcRequest::new(BrokerRpcOperation::Publish {
+                channel_id,
+                reservation_id,
+                now_ms,
+            }))
             .await?
             .reply
         {
@@ -1905,12 +2056,10 @@ impl BrokerHandle {
 
     pub async fn abort(&self, channel_id: i64, reservation_id: u64) -> Result<(), BrokerError> {
         match self
-            .request(BrokerRpcRequest {
-                op: BrokerRpcOperation::Abort {
-                    channel_id,
-                    reservation_id,
-                },
-            })
+            .request(BrokerRpcRequest::new(BrokerRpcOperation::Abort {
+                channel_id,
+                reservation_id,
+            }))
             .await?
             .reply
         {
@@ -1927,9 +2076,7 @@ impl BrokerHandle {
         req: BrokerFetchRequest,
     ) -> Result<Option<BrokerFetchedMessage>, BrokerError> {
         match self
-            .request(BrokerRpcRequest {
-                op: BrokerRpcOperation::FetchNext { req },
-            })
+            .request(BrokerRpcRequest::new(BrokerRpcOperation::FetchNext { req }))
             .await?
             .reply
         {
@@ -1947,9 +2094,9 @@ impl BrokerHandle {
         max_items: usize,
     ) -> Result<BrokerFetchBatch, BrokerError> {
         match self
-            .request(BrokerRpcRequest {
-                op: BrokerRpcOperation::FetchBatchAvailable { req, max_items },
-            })
+            .request(BrokerRpcRequest::new(
+                BrokerRpcOperation::FetchBatchAvailable { req, max_items },
+            ))
             .await?
             .reply
         {
@@ -1968,13 +2115,11 @@ impl BrokerHandle {
         now_ms: i64,
     ) -> Result<BrokerCommitOutcome, BrokerError> {
         match self
-            .request(BrokerRpcRequest {
-                op: BrokerRpcOperation::Commit {
-                    channel_id,
-                    reservation_id,
-                    now_ms,
-                },
-            })
+            .request(BrokerRpcRequest::new(BrokerRpcOperation::Commit {
+                channel_id,
+                reservation_id,
+                now_ms,
+            }))
             .await?
             .reply
         {
@@ -1993,13 +2138,11 @@ impl BrokerHandle {
         now_ms: i64,
     ) -> Result<BrokerCommitBatchOutcome, BrokerError> {
         match self
-            .request(BrokerRpcRequest {
-                op: BrokerRpcOperation::CommitBatch {
-                    channel_id,
-                    reservation_ids,
-                    now_ms,
-                },
-            })
+            .request(BrokerRpcRequest::new(BrokerRpcOperation::CommitBatch {
+                channel_id,
+                reservation_ids,
+                now_ms,
+            }))
             .await?
             .reply
         {
@@ -2017,12 +2160,10 @@ impl BrokerHandle {
         reservation_id: u64,
     ) -> Result<(), BrokerError> {
         match self
-            .request(BrokerRpcRequest {
-                op: BrokerRpcOperation::RequeueInflight {
-                    channel_id,
-                    reservation_id,
-                },
-            })
+            .request(BrokerRpcRequest::new(BrokerRpcOperation::RequeueInflight {
+                channel_id,
+                reservation_id,
+            }))
             .await?
             .reply
         {
@@ -2034,11 +2175,34 @@ impl BrokerHandle {
         }
     }
 
+    pub async fn requeue_inflight_batch(
+        &self,
+        channel_id: i64,
+        reservation_ids: Vec<u64>,
+    ) -> Result<(), BrokerError> {
+        match self
+            .request(BrokerRpcRequest::new(
+                BrokerRpcOperation::RequeueInflightBatch {
+                    channel_id,
+                    reservation_ids,
+                },
+            ))
+            .await?
+            .reply
+        {
+            BrokerRpcReply::Unit(result) => result,
+            other => Err(BrokerError::Rpc(format!(
+                "unexpected response for requeue_inflight_batch: {:?}",
+                other
+            ))),
+        }
+    }
+
     pub async fn requeue_all_inflight(&self, channel_id: i64) -> Result<(), BrokerError> {
         match self
-            .request(BrokerRpcRequest {
-                op: BrokerRpcOperation::RequeueAllInflight { channel_id },
-            })
+            .request(BrokerRpcRequest::new(
+                BrokerRpcOperation::RequeueAllInflight { channel_id },
+            ))
             .await?
             .reply
         {
@@ -2056,12 +2220,12 @@ impl BrokerHandle {
         max_items: usize,
     ) -> Result<Vec<BrokerEnvelope>, BrokerError> {
         match self
-            .request(BrokerRpcRequest {
-                op: BrokerRpcOperation::TakeCleanupBatch {
+            .request(BrokerRpcRequest::new(
+                BrokerRpcOperation::TakeCleanupBatch {
                     channel_id,
                     max_items,
                 },
-            })
+            ))
             .await?
             .reply
         {
@@ -2079,12 +2243,10 @@ impl BrokerHandle {
         reservation_id: u64,
     ) -> Result<(), BrokerError> {
         match self
-            .request(BrokerRpcRequest {
-                op: BrokerRpcOperation::CleanupAck {
-                    channel_id,
-                    reservation_id,
-                },
-            })
+            .request(BrokerRpcRequest::new(BrokerRpcOperation::CleanupAck {
+                channel_id,
+                reservation_id,
+            }))
             .await?
             .reply
         {
@@ -2102,12 +2264,10 @@ impl BrokerHandle {
         reservation_id: u64,
     ) -> Result<(), BrokerError> {
         match self
-            .request(BrokerRpcRequest {
-                op: BrokerRpcOperation::CleanupNack {
-                    channel_id,
-                    reservation_id,
-                },
-            })
+            .request(BrokerRpcRequest::new(BrokerRpcOperation::CleanupNack {
+                channel_id,
+                reservation_id,
+            }))
             .await?
             .reply
         {
@@ -2130,14 +2290,20 @@ impl BrokerHandle {
 
     async fn request(&self, request: BrokerRpcRequest) -> Result<BrokerRpcResponse, BrokerError> {
         match &self.inner {
-            BrokerHandleInner::Local(local) => Ok(execute_rpc_request(local, request).await),
+            BrokerHandleInner::Local(local) => Ok(execute_rpc_request(local, request, true).await),
             BrokerHandleInner::Remote(remote) => remote.request(request).await,
         }
     }
 }
 
 impl RemoteBrokerHandle {
-    async fn request(&self, request: BrokerRpcRequest) -> Result<BrokerRpcResponse, BrokerError> {
+    async fn request(
+        &self,
+        mut request: BrokerRpcRequest,
+    ) -> Result<BrokerRpcResponse, BrokerError> {
+        if request.request_id.is_empty() {
+            request.request_id = next_broker_rpc_request_id();
+        }
         let broker_node =
             find_or_wait_broker_node(self.cluster_manager_view.cluster_manager()).await?;
         let response = RPCCaller::<BrokerRpcRequest>::new()
@@ -2160,6 +2326,7 @@ impl RemoteBrokerHandle {
 async fn find_or_wait_broker_node(
     cluster_manager: &fluxon_commu::ClusterManager,
 ) -> Result<String, BrokerError> {
+    let mut rx = cluster_manager.listen();
     let members = cluster_manager.get_members();
     let broker_nodes: Vec<_> = members
         .iter()
@@ -2178,7 +2345,6 @@ async fn find_or_wait_broker_node(
         )));
     }
 
-    let mut rx = cluster_manager.listen();
     tokio::time::timeout(BROKER_DISCOVERY_TIMEOUT, async move {
         while let Ok(event) = rx.recv().await {
             match event {
@@ -2202,6 +2368,18 @@ async fn find_or_wait_broker_node(
             BROKER_DISCOVERY_TIMEOUT.as_secs()
         )))
     })
+}
+
+fn next_broker_rpc_request_id() -> String {
+    let prefix = BROKER_RPC_REQUEST_PREFIX.get_or_init(|| {
+        let started_ns = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock is before UNIX_EPOCH")
+            .as_nanos();
+        format!("{}-{}", std::process::id(), started_ns)
+    });
+    let seq = BROKER_RPC_REQUEST_SEQ.fetch_add(1, Ordering::Relaxed);
+    format!("{}-{}", prefix, seq)
 }
 
 fn is_broker_member(member: &fluxon_commu::ClusterMember) -> bool {
@@ -2321,6 +2499,86 @@ mod tests {
             consumer_id: consumer_id.to_string(),
             now_ms,
         }
+    }
+
+    #[tokio::test]
+    async fn rpc_request_cache_deduplicates_retried_reserve() {
+        let broker = LocalBrokerHandle::spawn_actor_with_cleanup_release_delay(
+            LocalBroker::new(),
+            8,
+            Duration::ZERO,
+        );
+        let cache = Arc::new(Mutex::new(BrokerRpcResponseCache::default()));
+        let upsert = BrokerRpcRequest::new(BrokerRpcOperation::UpsertChannel {
+            config: BrokerChannelConfig {
+                channel_id: 41,
+                capacity: 2,
+            },
+        });
+        let _ = execute_rpc_request_with_cache(&broker, &cache, upsert, false).await;
+
+        let reserve = BrokerRpcRequest {
+            request_id: "reserve-retry-1".to_string(),
+            op: BrokerRpcOperation::Reserve {
+                req: reserve_req(41, "p0", 10),
+            },
+        };
+        let first = execute_rpc_request_with_cache(&broker, &cache, reserve.clone(), false).await;
+        let second = execute_rpc_request_with_cache(&broker, &cache, reserve, false).await;
+        let first_reservation = match first.reply {
+            BrokerRpcReply::Reservation(Ok(reservation)) => reservation,
+            other => panic!("unexpected first reserve response: {:?}", other),
+        };
+        let second_reservation = match second.reply {
+            BrokerRpcReply::Reservation(Ok(reservation)) => reservation,
+            other => panic!("unexpected second reserve response: {:?}", other),
+        };
+        assert_eq!(
+            first_reservation.envelope.reservation_id,
+            second_reservation.envelope.reservation_id
+        );
+
+        let next = broker.reserve(reserve_req(41, "p0", 11)).await.unwrap();
+        assert_eq!(next.envelope.reservation_id, 2);
+        broker.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rpc_fetch_next_without_wait_returns_none() {
+        let broker = LocalBrokerHandle::spawn_actor_with_cleanup_release_delay(
+            LocalBroker::new(),
+            8,
+            Duration::ZERO,
+        );
+        broker
+            .upsert_channel(BrokerChannelConfig {
+                channel_id: 42,
+                capacity: 2,
+            })
+            .await
+            .unwrap();
+        let cache = Arc::new(Mutex::new(BrokerRpcResponseCache::default()));
+        let response = tokio::time::timeout(
+            Duration::from_millis(50),
+            execute_rpc_request_with_cache(
+                &broker,
+                &cache,
+                BrokerRpcRequest {
+                    request_id: "fetch-empty-1".to_string(),
+                    op: BrokerRpcOperation::FetchNext {
+                        req: fetch_req(42, "c0", 10),
+                    },
+                },
+                false,
+            ),
+        )
+        .await
+        .expect("remote-style fetch must not wait");
+        match response.reply {
+            BrokerRpcReply::Fetch(Ok(None)) => {}
+            other => panic!("unexpected fetch response: {:?}", other),
+        }
+        broker.shutdown().await.unwrap();
     }
 
     #[test]

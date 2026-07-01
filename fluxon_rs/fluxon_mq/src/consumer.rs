@@ -2803,20 +2803,16 @@ async fn requeue_pending_broker_inflight(
     chan_id: i64,
     reservation_ids: Vec<u64>,
 ) {
-    for reservation_id in reservation_ids.into_iter().rev() {
-        requeue_broker_inflight_best_effort(broker, chan_id, reservation_id).await;
+    if reservation_ids.is_empty() {
+        return;
     }
-}
-
-async fn requeue_broker_inflight_best_effort(
-    broker: &BrokerHandle,
-    chan_id: i64,
-    reservation_id: u64,
-) {
-    if let Err(err) = broker.requeue_inflight(chan_id, reservation_id).await {
+    if let Err(err) = broker
+        .requeue_inflight_batch(chan_id, reservation_ids)
+        .await
+    {
         warn!(
-            "best-effort broker requeue failed: chan_id={} reservation_id={} err={}",
-            chan_id, reservation_id, err
+            "best-effort broker batch requeue failed: chan_id={} err={}",
+            chan_id, err
         );
     }
 }

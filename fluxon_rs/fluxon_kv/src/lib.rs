@@ -1623,6 +1623,8 @@ async fn run_broker_impl(
         );
     }
 
+    let config = bootstrap_zero_contribution_client_config(config).await?;
+
     let kv_logs_dir = config
         .large_file_paths
         .kv_logs_dir(&config.cluster_name)
@@ -1646,8 +1648,6 @@ async fn run_broker_impl(
     info!("Broker config: {:?}", config);
     info!("Build version (git commit): {}", build_version);
     info!("Build version (source-sha256): {}", source_sha256);
-
-    let config = bootstrap_zero_contribution_client_config(config).await?;
 
     let mut metadata = HashMap::from([
         ("external_client".to_string(), "true".to_string()),
