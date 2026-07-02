@@ -650,6 +650,17 @@ def scenario_dynamic_producer_consumer(
     recovered_consumers: List[str] = []
     test_mpmc_id: Optional[str] = None
 
+    def _print_process_log_tail(log_file: str, *, max_lines: int = 200) -> None:
+        print(f"=== subprocess log tail: {log_file} ===", flush=True)
+        try:
+            with open(log_file, "rb") as handle:
+                lines = handle.readlines()[-max_lines:]
+            for raw in lines:
+                print(raw.decode("utf-8", "replace").rstrip("\n"), flush=True)
+        except Exception as exc:  # noqa: BLE001
+            print(f"failed to read subprocess log {log_file}: {exc}", flush=True)
+        print(f"=== end subprocess log tail: {log_file} ===", flush=True)
+
     def fail_fast_on_subprocess_error(*, process_type_filter: Optional[str] = None) -> None:
         for identifier, (process_type, proc, log_file) in process_handles_by_id.items():
             if process_type_filter is not None and process_type != process_type_filter:
@@ -658,6 +669,7 @@ def scenario_dynamic_producer_consumer(
             if rc is None:
                 continue
             if rc != 0:
+                _print_process_log_tail(log_file)
                 raise RuntimeError(
                     f"{process_type} {identifier} exited early with return code {rc}. "
                     f"Check log file for details: {log_file}"
@@ -681,6 +693,7 @@ def scenario_dynamic_producer_consumer(
                     print(f"{ptype} {identifier} completed successfully")
                     print(f"Log file: {log_file}")
                     continue
+                _print_process_log_tail(log_file)
                 raise RuntimeError(
                     f"{ptype} {identifier} failed with return code {proc.returncode}."
                     f" Check log file for details: {log_file}"

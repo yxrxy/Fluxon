@@ -2711,6 +2711,15 @@ async fn run_broker_cleanup_ack_until_success(
         match broker.cleanup_ack(chan_id, reservation_id).await {
             Ok(()) => return,
             Err(err) => {
+                if broker_cleanup_ack_error_is_terminal(&err) {
+                    warn!(
+                        "async broker cleanup ack stopped after terminal broker error: chan_id={} reservation_id={} err={}",
+                        chan_id,
+                        reservation_id,
+                        err
+                    );
+                    return;
+                }
                 warn!(
                     "async broker cleanup ack failed; retry_after_ms={}: chan_id={} reservation_id={} err={}",
                     retry_sleep.as_millis(),
@@ -2724,6 +2733,18 @@ async fn run_broker_cleanup_ack_until_success(
         retry_sleep = retry_sleep
             .saturating_mul(2)
             .min(BROKER_CLEANUP_ACK_RETRY_MAX_SLEEP);
+    }
+}
+
+fn broker_cleanup_ack_error_is_terminal(err: &crate::BrokerError) -> bool {
+    match err {
+        crate::BrokerError::ActorClosed | crate::BrokerError::ChannelNotFound(_) => true,
+        crate::BrokerError::Rpc(message) => {
+            message.contains("System shutdown")
+                || message.contains("actor closed")
+                || message.contains("channel not found")
+        }
+        _ => false,
     }
 }
 
